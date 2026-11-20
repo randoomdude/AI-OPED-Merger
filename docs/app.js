@@ -1,3 +1,5 @@
+import { fetchCaptions, parseCaptions, suggestedWindow, windowCaptions } from "./jimaku.js";
+import { rubyMarkup } from "./furigana.js";
 import { timestamp, clock, parseLrc, makeDraft, estimatePlainStart, fillMissingTimes,
     originalAss, validatedCues, mergedAss } from "./timing.js";
 import { readWhisperTiming, whisperDraft } from "./whisper.js";
@@ -132,6 +134,7 @@ function showSlot() {
     $("source-url").value = state.source?.url || state.song?.sources.uta_net || "";
     $("paste").value = "";
     showSourceLinks();
+    renderCaptionPreview();
     $("search-status").textContent = "";
     $("results").replaceChildren();
     showTiming();
@@ -170,6 +173,7 @@ if (nativeView) {
             $("filename").textContent = "Choose an episode from this PC.";
             $("helper-instructions").hidden = true;
             $("run-whisper").hidden = $("export-mkv").hidden = false;
+            $("jimaku-whisper").textContent = "Use Whisper on this song";
         } else if (pendingJobs.has(data?.id)) {
             const job = pendingJobs.get(data.id);
             pendingJobs.delete(data.id);
@@ -194,6 +198,8 @@ function loadEpisode(file) {
     worker?.terminate();
     sourceRequest?.abort();
     jimakuRequest?.abort();
+    clearCaptionPreview();
+    $("furigana-mode").value = "above";
     episode = null;
     $("project").hidden = true;
     $("track-options").hidden = true;
@@ -286,6 +292,7 @@ for (const [id, key] of [["query", "query"], ["alternates", "alternates"], ["win
 }
 $("query").addEventListener("input", showSourceLinks);
 $("window-start").addEventListener("input", showTimingDefaults);
+for (const id of ["window-start", "window-end"]) $(id).addEventListener("input", renderCaptionPreview);
 for (const key of ["first", "last", "second"]) {
     $(key).addEventListener("change", event => {
         slots[slot][key] = event.target.value === "" ? null : Number(event.target.value);
@@ -403,6 +410,104 @@ function alternateTitles(state) {
     return uniqueTitles(state.alternates.split(/\r?\n/));
 }
 
+let captionFile;
+let captionRequest;
+
+function clearCaptionPreview() {
+    captionRequest?.abort();
+    captionFile = null;
+    $("jimaku-preview").replaceChildren();
+}
+
+function songWindow() {
+    const state = slots[slot];
+    const { start, end: defaultEnd } = timingDefaults(state);
+    const end = state.windowEnd.trim() ? timestamp(state.windowEnd) : defaultEnd;
+    return [start, end].every(Number.isFinite) && start >= 0 && end > start && end <= (episode.duration ?? Infinity)
+        ? { start, end } : null;
+}
+
+async function checkCaptions(file, url, signal) {
+    clearCaptionPreview();
+    captionRequest = new AbortController();
+    const checking = AbortSignal.any([signal, captionRequest.signal]);
+    const area = $("jimaku-preview");
+    area.textContent = "Reading " + file.name + "…";
+    try {
+        const data = await fetchCaptions(url, checking);
+        if (checking.aborted) return;
+        captionFile = { name: file.name, url, cues: parseCaptions(data, file.name) };
+        renderCaptionPreview();
+    } catch (error) {
+        if (!checking.aborted) area.textContent = "Couldn’t read this subtitle file. " + error.message;
+    }
+}
+
+function renderCaptionPreview() {
+    if (!captionFile || !episode) return;
+    const file = captionFile;
+    const area = $("jimaku-preview");
+    area.replaceChildren(text("strong", file.name));
+    const range = songWindow();
+    const suggestion = suggestedWindow(file.cues, slot, episode.duration);
+    if (suggestion && (!range || Math.abs(suggestion.start - range.start) > 10 || Math.abs(suggestion.end - range.end) > 10)) {
+        const button = text("button", "Use music markers for " + slot);
+        button.onclick = () => {
+            slots[slot].windowStart = $("window-start").value = clock(suggestion.start, 3);
+            slots[slot].windowEnd = $("window-end").value = clock(suggestion.end, 3);
+            showTimingDefaults();
+            renderCaptionPreview();
+            seek(suggestion.start);
+        };
+        area.append(text("p", "This release marks music from " + clock(suggestion.start) + " to "
+            + clock(suggestion.end) + ". Check it against your audio."), button);
+    }
+    if (!range) {
+        area.append(text("p", "Set the song window above to check for timed lines."));
+        return;
+    }
+    const candidates = windowCaptions(file.cues, range.start, range.end);
+    const period = slot + " (" + clock(range.start) + " – " + clock(range.end) + ")";
+    if (!candidates.length) {
+        area.append(text("p", "No lyric or dialogue lines in " + period + ". Try Whisper on the episode audio."));
+        return;
+    }
+    area.append(text("p", candidates.length + " timed captions overlap " + period + ". Select the lyrics you hear."));
+    const list = document.createElement("div");
+    list.className = "caption-list";
+    const chosen = [];
+    for (const cue of candidates) {
+        const label = document.createElement("label");
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        label.append(check, " " + clock(cue.start) + " – " + clock(cue.end) + "  " + cue.text);
+        list.append(label);
+        chosen.push(check);
+    }
+    const all = text("button", "Select all");
+    all.onclick = () => {
+        const select = chosen.some(check => !check.checked);
+        for (const check of chosen) check.checked = select;
+        all.textContent = select ? "Clear selection" : "Select all";
+    };
+    const apply = text("button", "Import selected lines");
+    apply.onclick = () => {
+        const rows = candidates.filter((_, i) => chosen[i].checked).map(cue => ({
+            text: cue.text, start: clock(cue.start), end: clock(cue.end), include: true,
+        }));
+        if (!rows.length) return status("Select at least one Jimaku caption to import.", true);
+        if (!setSource({ provider: "Jimaku", title: file.name, url: file.url, synced: "",
+            plain: rows.map(row => row.text).join("\n") })) return;
+        sourceRequest?.abort();
+        slots[slot].rows = rows;
+        $("source-url").value = file.url;
+        showTiming();
+        status("Imported " + rows.length + " timed Jimaku lines into " + slot + ".");
+    };
+    area.append(list, all, apply);
+}
+
+
 function showJimakuLink() {
     const title = $("jimaku-title").value.trim();
     const id = catalogShow(title)?.jimaku_id;
@@ -414,6 +519,7 @@ function showJimakuLink() {
 for (const id of ["jimaku-title", "jimaku-episode"]) {
     $(id).addEventListener("input", () => {
         jimakuRequest?.abort();
+        clearCaptionPreview();
         $("jimaku-status").textContent = "";
         $("jimaku-results").replaceChildren();
         showJimakuLink();
@@ -449,6 +555,7 @@ async function listJimakuFiles(id, number, key, signal) {
     if (signal.aborted) return;
     $("jimaku-public").href = "https://jimaku.cc/entry/" + id;
     let count = 0;
+    const readable = [];
     for (const file of files) {
         if (typeof file?.name !== "string" || typeof file.url !== "string") continue;
         const url = URL.parse(file.url, "https://jimaku.cc");
@@ -459,16 +566,24 @@ async function listJimakuFiles(id, number, key, signal) {
         link.target = "_blank";
         link.rel = "noopener noreferrer";
         row.append(link);
+        if (/\.(ass|ssa|srt)$/i.test(file.name)) {
+            const check = text("button", "Check song lines");
+            check.onclick = () => checkCaptions(file, url.href, signal);
+            row.append(check);
+            readable.push({ file, url });
+        }
         $("jimaku-results").append(row);
         count++;
     }
     $("jimaku-status").textContent = count ? count + (count === 1 ? " subtitle file found. " : " subtitle files found. ")
-        + "Check the file for opening or ending lyrics."
+        + (readable.length ? "Check timed captions for the selected song." : "Open the download to inspect this file format.")
         : number ? "Jimaku returned no files for episode " + number + ". Browse the entry for other releases."
             : "Jimaku returned no subtitle files for this title.";
+    if (readable.length === 1) await checkCaptions(readable[0].file, readable[0].url.href, signal);
 }
 
 async function runJimakuSearch(entryId) {
+    clearCaptionPreview();
     jimakuRequest?.abort();
     jimakuRequest = new AbortController();
     const { signal } = jimakuRequest;
@@ -597,15 +712,23 @@ $("search").onclick = async () => {
     }
 };
 
+$("paste").addEventListener("paste", event => {
+    const html = event.clipboardData?.getData("text/html");
+    if (!html || !/<ruby\b/i.test(html)) return;
+    event.preventDefault();
+    const box = event.currentTarget;
+    box.setRangeText(rubyMarkup(html), box.selectionStart, box.selectionEnd, "end");
+});
 $("use-paste").onclick = () => {
     try {
-        const url = new URL($("source-url").value);
-        const plain = $("paste").value.trim();
-        if (!["https:", "http:"].includes(url.protocol) || !plain) throw Error();
+        const source = $("source-url").value.trim();
+        const url = source ? new URL(source) : null;
+        const plain = rubyMarkup($("paste").value.trim());
+        if ((url && !["https:", "http:"].includes(url.protocol)) || !plain) throw Error();
         const lines = parseLrc(plain);
-        setSource({ provider: "Pasted text", url: url.href, plain: lines.length ? "" : plain, synced: lines.length ? plain : "" });
+        setSource({ provider: "Pasted text", url: url?.href ?? "", plain: lines.length ? "" : plain, synced: lines.length ? plain : "" });
     } catch {
-        status("Enter some lyrics and a complete source URL.", true);
+        status("Enter lyrics. If you include a source URL, use a complete http or https address.", true);
     }
 };
 
@@ -625,15 +748,15 @@ $("import-whisper").onchange = async event => {
 };
 
 $("run-whisper").onclick = async () => {
-    const state = slots[slot];
-    const { start, end: defaultEnd } = timingDefaults(state);
-    const end = state.windowEnd.trim() ? timestamp(state.windowEnd) : defaultEnd;
-    if (![start, end].every(Number.isFinite) || start < 0 || end <= start || end > (episode.duration ?? Infinity)) {
-        return status("Enter the song start and a valid end within the episode before running Whisper.", true);
+    const range = songWindow();
+    if (!range) {
+        $("window-start").focus();
+        return status("Set the song window or choose the Jimaku music markers before running Whisper.", true);
     }
+    const { start, end } = range;
     const button = $("run-whisper");
     const progress = $("whisper-progress");
-    button.disabled = $("export-mkv").disabled = true;
+    button.disabled = $("jimaku-whisper").disabled = $("export-mkv").disabled = true;
     progress.hidden = false;
     progress.textContent = "Listening to the " + slot + " from " + clock(start) + " to " + clock(end)
         + " on this PC. The first run can take several minutes.";
@@ -641,8 +764,14 @@ $("run-whisper").onclick = async () => {
         await applyWhisper(() => desktopJob("time_song", episode.desktopId, slot, start, end));
     } finally {
         progress.hidden = true;
-        button.disabled = $("export-mkv").disabled = false;
+        button.disabled = $("jimaku-whisper").disabled = $("export-mkv").disabled = false;
     }
+};
+
+$("jimaku-whisper").onclick = () => {
+    $("audio-options").open = true;
+    if (desktop) $("run-whisper").click();
+    else $("audio-options").scrollIntoView({ block: "center" });
 };
 
 async function applyWhisper(read) {
@@ -688,11 +817,11 @@ function showTiming() {
     $("timing").hidden = !state.source;
     $("source-status").textContent = state.source ? (state.source.title || state.source.provider)
         + " · " + (state.source.whisper ? "Timing from episode audio"
-            : state.lines.length ? state.lines.length + " timed source lines" : "Manual timing") : "";
+            : state.source.provider === "Jimaku" ? "Episode subtitle timing" : state.lines.length ? state.lines.length + " timed source lines" : "Manual timing") : "";
     const timed = Boolean(state.lines.length);
     $("anchors").hidden = !timed;
-    $("plain-hint").hidden = timed || state.source?.whisper === true;
-    $("draft").hidden = state.source?.provider === "Local Whisper";
+    $("plain-hint").hidden = timed || state.source?.whisper === true || state.source?.provider === "Jimaku";
+    $("draft").hidden = ["Local Whisper", "Jimaku"].includes(state.source?.provider);
     if (timed) {
         for (const key of ["first", "last", "second"]) {
             $(key).replaceChildren(...state.lines.map((line, index) =>
@@ -833,15 +962,15 @@ async function exportProject(zip, saveMkv = false) {
             if (!cues.length) throw Error("Time at least one lyric line to export merged subtitles.");
             const included = Object.entries(slots).filter(([, value]) => value.source && !value.rows.some(row => row.include));
             if (included.length && !window.confirm("Export without timed lyrics for " + included.map(([key]) => key).join(", ") + "?")) return;
-            const ass = mergedAss(original, cues);
+            const ass = mergedAss(original, cues, $("furigana-mode").value);
             let saved;
             if (saveMkv) {
-                $("export-mkv").disabled = $("run-whisper").disabled = true;
+                $("jimaku-whisper").disabled = $("export-mkv").disabled = $("run-whisper").disabled = true;
                 status("Choose where to save the new MKV.");
                 try {
                     saved = await desktopJob("save_mkv", episode.desktopId, ass, selectedTrack.language);
                 } finally {
-                    $("export-mkv").disabled = $("run-whisper").disabled = false;
+                    $("jimaku-whisper").disabled = $("export-mkv").disabled = $("run-whisper").disabled = false;
                 }
                 if (!saved) return status("Save canceled.");
                 status("Saved " + saved.path + (saved.warnings.length ? " · " + saved.warnings.join(" ") : ""));
@@ -859,10 +988,10 @@ async function exportProject(zip, saveMkv = false) {
             "project.json": fflate.strToU8(JSON.stringify({
                 version: 1, mkv: episode.file.name, mkv_size: episode.file.size,
                 track: selectedTrack.number, duration_ms: episode.duration,
-                chapters: episode.chapters, songs: slots,
+                chapters: episode.chapters, songs: slots, furigana: $("furigana-mode").value,
             }, null, 2)),
         };
-        if (cues?.length) pack["merged.ass"] = fflate.strToU8(mergedAss(original, cues));
+        if (cues?.length) pack["merged.ass"] = fflate.strToU8(mergedAss(original, cues, $("furigana-mode").value));
         episode.fonts.forEach((font, index) => {
             const name = font.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").replace(/[. ]+$/, "");
             pack["fonts/" + String(index + 1) + "-" + name] = font.data;
@@ -920,6 +1049,7 @@ $("restore").onchange = async event => {
         if (Object.values(slots).some(state => state.source) &&
             !window.confirm("Replace the draft in this browser tab with the saved project?")) return;
         slots = restored;
+        $("furigana-mode").value = ["above", "inline", "base"].includes(saved.furigana) ? saved.furigana : "above";
         $("track").value = saved.track;
         trackChanged();
         showSlot();

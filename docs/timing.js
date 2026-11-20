@@ -1,3 +1,5 @@
+import { assLyric } from "./furigana.js";
+
 export function timestamp(value) {
     const text = String(value ?? "").trim();
     const parts = text.split(":");
@@ -163,7 +165,7 @@ export function validatedCues(slots, duration) {
     return cues.sort((a, b) => a.start - b.start);
 }
 
-export function mergedAss(original, cues) {
+export function mergedAss(original, cues, furigana = "above") {
     if (!cues.length) return original;
     const events = original.indexOf("[Events]");
     if (events < 0 || !original.includes("[V4+ Styles]")) throw Error("ASS script has no standard style and event sections.");
@@ -177,7 +179,7 @@ export function mergedAss(original, cues) {
     const withStyle = original.slice(0, events).trimEnd() + "\n" + definition + "\n\n" + original.slice(events);
     // Lyrics are plain text. Full-width braces and slashes cannot become ASS overrides.
     return withStyle.trimEnd() + "\n" + cues.map(cue => {
-        const text = cue.text.replace(/\\/g, "＼").replace(/\{/g, "｛").replace(/\}/g, "｝").replace(/\r?\n/g, "\\N");
+        const text = assLyric(cue.text, furigana, size);
         return "Dialogue: " + [0, clock(cue.start), clock(cue.end), style, cue.slot, 0, 0, 0, "", text].join(",");
     }).join("\n") + "\n";
 }

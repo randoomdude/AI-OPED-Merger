@@ -1,3 +1,4 @@
+import { lyricForms } from "./furigana.js";
 import { clock } from "./timing.js";
 
 export function readWhisperTiming(data, file, slot, duration) {
@@ -109,7 +110,7 @@ export function whisperDraft(data, reference) {
         return { rows, matched: rows.filter(row => row.include).length };
     }
     const audio = timedCharacters(data.segments);
-    const lines = reference.map(row => characters(row.text));
+    const lines = reference.map(row => characters(lyricForms(row.text).base));
     const matches = matchLines(lines, audio);
     let matched = 0;
     const rows = reference.map((row, index) => {

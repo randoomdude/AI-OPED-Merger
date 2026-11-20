@@ -60,3 +60,11 @@ details > button { margin-top: 9px; }
   .cue { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cue > :first-child { grid-column: span 2; }
 }
+
+#jimaku-preview:not(:empty) { margin: 12px 0; }
+#jimaku-preview strong, #jimaku-results a { overflow-wrap: anywhere; }
+#jimaku-preview button { margin: 4px 8px 8px 0; }
+.caption-list { max-height: 20rem; overflow: auto; margin: 8px 0; }
+.panel .caption-list label { display: flex; align-items: baseline; gap: 8px; padding: 5px; white-space: pre-line; }
+.panel .caption-list input { flex: none; }
+.export-actions { margin-top: 12px; }

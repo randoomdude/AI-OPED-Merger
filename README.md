@@ -30,7 +30,13 @@ python -m PyInstaller --onefile --windowed --name "AI OP-ED Merger" --add-data "
 
 To continue editing later, choose the same MKV and open the project ZIP under **Export**.
 
-Under **Jimaku episode subtitles**, check the anime title and episode number detected from the MKV. **Browse on Jimaku** works without a key. For results within the app, enter a key from your [Jimaku account](https://jimaku.cc/account) and use **Search Jimaku**. Jimaku returns episode subtitle files whose song coverage varies by upload. The key stays in this tab and goes only to Jimaku.
+Under **Jimaku episode subtitles**, check the anime title and episode number detected from the MKV. **Browse on Jimaku** works without a key. For results within the app, enter a key from your [Jimaku account](https://jimaku.cc/account) and use **Search Jimaku**. The app checks the only readable result automatically. With several SRT or ASS/SSA files, choose **Check song lines** on a result. Review captions overlapping the current song window, select the lyrics, and choose **Import selected lines** to keep their episode timing. If the file brackets a song with music marks, **Use music markers** can set the window. Verify the range against your release. **Use Whisper on this song** runs the desktop audio fallback on that window. The browser offers the local helper and timing import. The key stays in this tab and goes only to Jimaku.
+
+## Furigana
+
+In **Paste lyrics or LRC**, type \`剣《つるぎ》を持《も》つ\` or paste HTML ruby such as \`<ruby>剣<rt>つるぎ</rt></ruby>\`. Use \`｜\` before a word to mark its exact beginning. Readings can also be edited in the line timing list. For audio matching, Whisper uses the underlying lyric text.
+
+Under **Export**, choose a small reading line above the whole lyric, inline parentheses, or lyrics without readings. The same setting applies to standalone ASS, the MKV subtitle track, and the merged ASS inside a project ZIP. The ZIP retains the annotations for later editing.
 
 ## Timing from episode audio
 
