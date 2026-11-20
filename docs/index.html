@@ -36,8 +36,9 @@
       </div>
       <div class="grid">
         <label>Episode start<input id="window-start" placeholder="0:01:09.00"></label>
-        <label>Episode end<input id="window-end" placeholder="0:02:39.00"></label>
+        <label>Episode end (optional)<input id="window-end"></label>
       </div>
+      <p class="muted">Timed drafts stop at 1:30 or the chapter end, whichever comes first. Enter an episode end to change it.</p>
       <video id="player" controls preload="metadata" playsinline></video>
       <div class="row player-controls">
         <button id="jump" type="button">Go to song start</button>
@@ -76,11 +77,11 @@
     <section id="timing" class="panel" hidden>
       <h2>Line timing</h2>
       <div id="anchors" hidden>
-        <p class="muted">Listen for the first lyric in the episode, then match it to its line in the source. A second match can correct steady drift.</p>
+        <p class="muted">The draft places the source timestamps relative to the episode start. Enter the time you hear the first line to adjust the alignment. A second match can correct steady drift.</p>
         <div class="grid">
           <label>First line heard<select id="first"></select></label>
           <label>Last line heard<select id="last"></select></label>
-          <label>First line in episode<input id="first-episode" placeholder="0:01:12.50"></label>
+          <label>First line in episode (optional)<input id="first-episode"></label>
           <div><button type="button" data-capture="first-episode">Use playhead for first line</button></div>
           <label>Second anchor line<select id="second"></select></label>
           <label>Second line in episode<input id="second-episode" placeholder="0:02:01.40"></label>

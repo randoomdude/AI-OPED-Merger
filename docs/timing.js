@@ -47,16 +47,19 @@ export function makeDraft(lines, { first, last, firstEpisode, second, secondEpis
         }
         scale = (secondEpisode - firstEpisode) / (secondSource - firstSource);
     }
-    return lines.slice(first, last + 1).map((line, index) => {
+    const cutoff = Math.round(end / 10) * 10;
+    const rows = [];
+    for (let index = first; index <= last; index++) {
+        const line = lines[index];
         const lineStart = Math.round(firstEpisode + (line.time - firstSource) * scale);
-        const next = lines[first + index + 1];
-        const nextStart = index + first < last
-            ? Math.round(firstEpisode + (next.time - firstSource) * scale)
+        if (Math.round(lineStart / 10) * 10 >= cutoff) break;
+        const nextStart = index < last
+            ? Math.round(firstEpisode + (lines[index + 1].time - firstSource) * scale)
             : lineStart + 4000;
-        const lineEnd = Math.min(end, nextStart);
-        return { text: line.text, start: clock(lineStart), end: lineEnd > lineStart ? clock(lineEnd) : "",
-            include: lineStart < end };
-    });
+        const lineEnd = Math.min(cutoff, nextStart);
+        rows.push({ text: line.text, start: clock(lineStart), end: lineEnd > lineStart ? clock(lineEnd) : "", include: true });
+    }
+    return rows;
 }
 
 // Matroska supplies the ASS script and the dialogue fields separately.

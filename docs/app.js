@@ -2,6 +2,7 @@ import { timestamp, clock, parseLrc, makeDraft, originalAss, validatedCues, merg
 
 const $ = id => document.getElementById(id);
 const player = $("player");
+const defaultSongDuration = 90_000;
 const client = "AI-OPED-Merger/0.1.1 (https://github.com/randoomdude/AI-OPED-Merger)";
 const catalog = await fetch("./example-themes.json", { cache: "no-cache" })
     .then(response => response.json()).catch(() => null);
@@ -43,8 +44,8 @@ function setPreview(file) {
 
 function chapterFor(name) {
     const pattern = name === "OP"
-        ? /^(?:(?:op|opening|intro)(?:\s*\d+)?|オープニング)$/i
-        : /^(?:(?:ed|ending|credits|end credits)(?:\s*\d+)?|エンディング)$/i;
+        ? /^(?:(?:op|opening(?: credits)?|intro)(?:\s*\d+)?|オープニング)$/i
+        : /^(?:(?:ed|ending(?: credits)?|credits|end credits)(?:\s*\d+)?|エンディング)$/i;
     return episode.chapters.find(chapter => pattern.test(chapter.title.trim()));
 }
 
@@ -56,10 +57,25 @@ function stateFor(name) {
     const show = shows.find(entry => entry.aliases.some(alias => normalize(anime) === normalize(alias)));
     const song = show?.songs.find(item => item.slot === name) || null;
     return {
-        chapter, song, windowStart: clock(chapter?.start), windowEnd: clock(chapter?.end),
+        chapter, song, windowStart: clock(chapter?.start), windowEnd: "",
         query: song?.search_query || song?.title || anime, source: null, lines: [], rows: [],
         first: 0, last: 0, second: null, firstEpisode: "", secondEpisode: "",
     };
+}
+
+function timingDefaults(state) {
+    const start = timestamp(state.windowStart);
+    const chapterEnd = state.chapter?.end;
+    const end = Math.min(start + defaultSongDuration, episode.duration ?? Infinity,
+        chapterEnd > start ? chapterEnd : Infinity);
+    const firstEpisode = start + Math.max(0, state.lines[state.first]?.time ?? NaN);
+    return { start, end, firstEpisode };
+}
+
+function showTimingDefaults() {
+    const defaults = timingDefaults(slots[slot]);
+    $("window-end").placeholder = clock(defaults.end) || "Up to 1:30 after episode start";
+    $("first-episode").placeholder = clock(defaults.firstEpisode) || "Set the episode start first";
 }
 
 function trackChanged() {
@@ -75,8 +91,8 @@ function showSlot() {
     $("window-start").value = state.windowStart;
     $("window-end").value = state.windowEnd;
     $("chapter-note").textContent = state.chapter
-        ? "Window suggested by the MKV chapter named " + state.chapter.title + "."
-        : "Enter the song’s start and end if your MKV has no named chapter.";
+        ? "Song start from the MKV chapter named " + state.chapter.title + "."
+        : "Enter the song’s start in the episode.";
     $("song-title").textContent = state.song ? state.song.title + " · " + state.song.artist : "";
     $("query").value = state.query;
     $("source-url").value = state.source?.url || state.song?.sources.uta_net || "";
@@ -193,11 +209,13 @@ for (const [id, key] of [["query", "query"], ["window-start", "windowStart"], ["
     $(id).addEventListener("input", event => { slots[slot][key] = event.target.value; });
 }
 $("query").addEventListener("input", showSourceLinks);
+$("window-start").addEventListener("input", showTimingDefaults);
 for (const key of ["first", "last", "second"]) {
     $(key).addEventListener("change", event => {
         slots[slot][key] = event.target.value === "" ? null : Number(event.target.value);
     });
 }
+$("first").addEventListener("change", showTimingDefaults);
 for (const button of document.querySelectorAll("[data-capture]")) {
     button.onclick = () => {
         if (!player.readyState) return status("Load a playable preview before capturing the playhead.", true);
@@ -327,6 +345,7 @@ function showTiming() {
         $("first-episode").value = state.firstEpisode;
         $("second-episode").value = state.secondEpisode;
     }
+    showTimingDefaults();
     showRows();
 }
 
@@ -380,9 +399,12 @@ $("draft").onclick = () => {
     const state = slots[slot];
     if (state.rows.length && !window.confirm("Rebuild this song’s draft and replace its line edits?")) return;
     try {
+        const defaults = timingDefaults(state);
         state.rows = state.lines.length ? makeDraft(state.lines, {
-            first: state.first, last: state.last, second: state.second, firstEpisode: timestamp(state.firstEpisode),
-            secondEpisode: timestamp(state.secondEpisode), start: timestamp(state.windowStart), end: timestamp(state.windowEnd),
+            first: state.first, last: state.last, second: state.second,
+            firstEpisode: state.firstEpisode.trim() ? timestamp(state.firstEpisode) : defaults.firstEpisode,
+            secondEpisode: timestamp(state.secondEpisode), start: defaults.start,
+            end: state.windowEnd.trim() ? timestamp(state.windowEnd) : defaults.end,
         }) : state.source.plain.split(/\r?\n/).filter(line => line.trim()).map(line =>
             ({ text: line.trim(), start: "", end: "", include: true }));
         showRows();
