@@ -159,7 +159,38 @@ function showSourceLinks() {
     }
 }
 
+const nativeView = window.chrome?.webview;
+let desktop = false;
+const pendingJobs = new Map();
+if (nativeView) {
+    nativeView.addEventListener("message", ({ data }) => {
+        if (data?.opedDesktop === true) {
+            desktop = true;
+            $("intro").textContent = "Time opening and ending lyrics and save a new MKV with the merged subtitle track.";
+            $("filename").textContent = "Choose an episode from this PC.";
+            $("helper-instructions").hidden = true;
+            $("run-whisper").hidden = $("export-mkv").hidden = false;
+        } else if (pendingJobs.has(data?.id)) {
+            const job = pendingJobs.get(data.id);
+            pendingJobs.delete(data.id);
+            if (data.error) job.reject(Error(data.error));
+            else job.resolve(data.value);
+        }
+    });
+    nativeView.postMessage({ action: "oped_ready" });
+}
+
+function desktopJob(action, ...args) {
+    return new Promise((resolve, reject) => {
+        const id = crypto.randomUUID();
+        pendingJobs.set(id, { resolve, reject });
+        nativeView.postMessage({ id, action, args });
+    });
+}
+
 function loadEpisode(file) {
+    const desktopId = desktop ? crypto.randomUUID() : null;
+    if (desktopId) nativeView.postMessageWithAdditionalObjects({ action: "episode", id: desktopId }, [file]);
     worker?.terminate();
     sourceRequest?.abort();
     jimakuRequest?.abort();
@@ -187,7 +218,7 @@ function loadEpisode(file) {
         const filename = file.name.replace(/^(?:\[[^\]]+\]\s*)+/, "").replace(/\.mkv$/i, "");
         const match = filename.match(/^(.+?)(?:\s+-\s+(\d+(?:\.\d+)?)(?:v\d+)?(?=\s|\[|\(|$)|[ ._-]+S\d+E(\d+)\b)/i);
         const number = Number(match?.[2] ?? match?.[3]);
-        episode = { ...data, file, anime: match?.[1] || filename };
+        episode = { ...data, file, desktopId, anime: match?.[1] || filename };
         $("jimaku-title").value = episode.anime;
         $("jimaku-episode").value = Number.isInteger(number) ? String(number) : "";
         $("jimaku-status").textContent = "";
@@ -587,14 +618,44 @@ $("import-whisper").onchange = async event => {
     const file = event.target.files[0];
     if (!episode || !file) return;
     event.target.value = "";
+    await applyWhisper(async () => {
+        if (file.size > 2 * 1024 * 1024) throw Error("Choose the small timing JSON file produced by the helper.");
+        return JSON.parse(await file.text());
+    });
+};
+
+$("run-whisper").onclick = async () => {
+    const state = slots[slot];
+    const { start, end: defaultEnd } = timingDefaults(state);
+    const end = state.windowEnd.trim() ? timestamp(state.windowEnd) : defaultEnd;
+    if (![start, end].every(Number.isFinite) || start < 0 || end <= start || end > (episode.duration ?? Infinity)) {
+        return status("Enter the song start and a valid end within the episode before running Whisper.", true);
+    }
+    const button = $("run-whisper");
+    const progress = $("whisper-progress");
+    button.disabled = $("export-mkv").disabled = true;
+    progress.hidden = false;
+    progress.textContent = "Listening to the " + slot + " from " + clock(start) + " to " + clock(end)
+        + " on this PC. The first run can take several minutes.";
+    try {
+        await applyWhisper(() => desktopJob("time_song", episode.desktopId, slot, start, end));
+    } finally {
+        progress.hidden = true;
+        button.disabled = $("export-mkv").disabled = false;
+    }
+};
+
+async function applyWhisper(read) {
     const opened = episode;
     const selected = slot;
     const state = slots[selected];
     const source = state.source;
+    const snapshot = JSON.stringify(state);
     try {
-        if (file.size > 2 * 1024 * 1024) throw Error("Choose the small timing JSON file produced by the helper.");
-        const input = JSON.parse(await file.text());
-        if (episode !== opened || slot !== selected || slots[selected] !== state || state.source !== source) return;
+        const input = await read();
+        if (episode !== opened || slot !== selected || slots[selected] !== state || JSON.stringify(state) !== snapshot) {
+            return status("The episode, song, or draft changed while Whisper timing was loading. Run it again for the current selection.");
+        }
         const data = readWhisperTiming(input, opened.file, selected, opened.duration);
         const reference = state.rows.length ? state.rows : state.lines.length
             ? plainRows(state.lines.slice(state.first, state.last + 1).map(line => line.text).join("\n"))
@@ -620,7 +681,7 @@ $("import-whisper").onchange = async event => {
     } catch (error) {
         status(error instanceof SyntaxError ? "Choose a valid timing JSON file from the Whisper helper." : error.message, true);
     }
-};
+}
 
 function showTiming() {
     const state = slots[slot];
@@ -755,7 +816,7 @@ function download(name, data, type) {
     setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
-function exportProject(zip) {
+async function exportProject(zip, saveMkv = false) {
     try {
         const original = originalAss(selectedTrack);
         const rows = Object.fromEntries(Object.entries(slots).map(([key, state]) => [key,
@@ -772,7 +833,21 @@ function exportProject(zip) {
             if (!cues.length) throw Error("Time at least one lyric line to export merged subtitles.");
             const included = Object.entries(slots).filter(([, value]) => value.source && !value.rows.some(row => row.include));
             if (included.length && !window.confirm("Export without timed lyrics for " + included.map(([key]) => key).join(", ") + "?")) return;
-            download(name + ".oped.ass", mergedAss(original, cues), "text/plain;charset=utf-8");
+            const ass = mergedAss(original, cues);
+            let saved;
+            if (saveMkv) {
+                $("export-mkv").disabled = $("run-whisper").disabled = true;
+                status("Choose where to save the new MKV.");
+                try {
+                    saved = await desktopJob("save_mkv", episode.desktopId, ass, selectedTrack.language);
+                } finally {
+                    $("export-mkv").disabled = $("run-whisper").disabled = false;
+                }
+                if (!saved) return status("Save canceled.");
+                status("Saved " + saved.path + (saved.warnings.length ? " · " + saved.warnings.join(" ") : ""));
+                return;
+            }
+            download(name + ".oped.ass", ass, "text/plain;charset=utf-8");
             const filled = Object.entries(rows).filter(([key, draft]) => slots[key].rows !== draft);
             for (const [key, draft] of filled) slots[key].rows = draft;
             if (filled.length) showRows();
@@ -799,6 +874,7 @@ function exportProject(zip) {
     }
 }
 
+$("export-mkv").onclick = () => exportProject(false, true);
 $("export-ass").onclick = () => exportProject(false);
 $("export-zip").onclick = () => exportProject(true);
 

@@ -4,6 +4,21 @@ Collect song lyrics, align them against an episode, and export merged ASS subtit
 
 The release lives under `docs/`. Serve that folder over HTTP for local development, for example with `python -m http.server 8000 --directory docs`.
 
+## Windows desktop app
+
+Open **AI OP-ED Merger.exe**, choose the episode MKV once, and select Opening or Ending. If the episode has no matching chapter, enter the song start. Under **Time from episode audio**, choose **Time with local Whisper**. If you have lyrics to match, apply them first. The editor displays the resulting lines for review.
+
+Choose **Save as new MKV** to write a separate episode with a selectable **Episode + OP/ED** subtitle track. The app uses MKVToolNix to copy the original tracks, attachments, and chapters and add the merged ASS. Choose a new filename each time. The merged track includes the selected original subtitle track and the enabled lyrics from both song slots.
+
+The desktop editor uses the Windows WebView2 runtime. Audio timing uses the local multilingual Whisper medium model, FFmpeg, and a Python installation with `openai-whisper`. The executable looks for Python 3.11 first. Set `AI_OPED_PYTHON` to a specific `python.exe` to use another environment. Saving MKVs requires `mkvmerge.exe` on PATH or in the standard MKVToolNix installation folder.
+
+To run from source on Windows, install `pywebview==6.2.1` in the Python environment with Whisper and run `python desktop.py`. To build the executable, run the following from the repository root in a clean Python 3.11 environment.
+
+```powershell
+python -m pip install pywebview==6.2.1 pyinstaller==6.22.3
+python -m PyInstaller --onefile --windowed --name "AI OP-ED Merger" --add-data "docs:docs" desktop.py
+```
+
 ## Using the app
 
 1. Choose a downloaded MKV and select its full subtitle track.
