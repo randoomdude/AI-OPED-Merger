@@ -1,4 +1,5 @@
-import { fetchCaptions, parseCaptions, suggestedWindow, windowCaptions } from "./jimaku.js";
+import { dialogueIntervals, dialogueOffset, overlapsDialogue, songGaps } from "./caption-alignment.js";
+import { fetchCaptions, parseCaptions, suggestedWindow, lyricWindows, windowCaptions } from "./jimaku.js";
 import { rubyMarkup } from "./furigana.js";
 import { timestamp, clock, parseLrc, makeDraft, estimatePlainStart, fillMissingTimes,
     originalAss, validatedCues, mergedAss } from "./timing.js";
@@ -14,6 +15,9 @@ const shows = Array.isArray(catalog) ? catalog : catalog ? [catalog] : [];
 const animeTitleCache = new Map();
 let episode;
 let selectedTrack;
+let localDialogue = [];
+const trackGaps = { OP: [], ED: [] };
+let pendingSeek;
 let worker;
 let previewUrl;
 let slot = "OP";
@@ -45,6 +49,7 @@ function setPreview(file) {
     const input = /\.mkv$/i.test(file.name) ? file.slice(0, file.size, "video/x-matroska") : file;
     previewUrl = URL.createObjectURL(input);
     $("playback-note").textContent = "";
+    pendingSeek = null;
     player.src = previewUrl;
 }
 
@@ -114,6 +119,24 @@ function showSecondAnchor() {
 
 function trackChanged() {
     selectedTrack = episode.tracks.find(track => track.number === Number($("track").value));
+    localDialogue = dialogueIntervals(selectedTrack);
+    for (const name of ["OP", "ED"]) {
+        const state = slots[name];
+        const gaps = selectedTrack.forced || /^(?:signs|songs|forced)$|\b(?:signs|songs) only\b/i.test(selectedTrack.name || "")
+            ? [] : songGaps(localDialogue, name, episode.duration);
+        trackGaps[name] = gaps;
+        if (state.chapter || state.windowOrigin === "manual" ||
+            (state.windowStart || state.windowEnd) && state.windowOrigin !== "a gap in MKV dialogue") continue;
+        const same = gaps.find(g => g.start === timestamp(state.windowStart));
+        const possible = gaps.filter(g => g.end - g.start <= 125_000);
+        const gap = same || (gaps.length === 1 ? gaps[0] : possible.length === 1 ? possible[0] : null);
+        if (gap) useGap(state, gap);
+        else if (state.windowOrigin === "a gap in MKV dialogue") {
+            state.windowStart = state.windowEnd = state.windowOrigin = "";
+        }
+    }
+    syncWindowFields();
+    renderCaptionPreview();
     const styleCount = (selectedTrack.header.match(/^Style:/gm) || []).length;
     $("track-summary").textContent = selectedTrack.cues.length + " subtitle events · " + styleCount
         + " ASS styles · " + episode.fonts.length + " attached fonts";
@@ -124,9 +147,7 @@ function showSlot() {
     const state = slots[slot];
     $("window-start").value = state.windowStart;
     $("window-end").value = state.windowEnd;
-    $("chapter-note").textContent = state.chapter
-        ? "Song start from the MKV chapter named " + state.chapter.title + "."
-        : "Enter the song’s start in the episode.";
+    showWindowNote();
     $("query").value = state.query;
     $("alternates").value = state.alternates;
     $("alternates").placeholder = catalogShow(state.anime)?.aliases.join("\n") || "One alternate title per line";
@@ -224,7 +245,7 @@ function loadEpisode(file) {
         const filename = file.name.replace(/^(?:\[[^\]]+\]\s*)+/, "").replace(/\.mkv$/i, "");
         const match = filename.match(/^(.+?)(?:\s+-\s+(\d+(?:\.\d+)?)(?:v\d+)?(?=\s|\[|\(|$)|[ ._-]+S\d+E(\d+)\b)/i);
         const number = Number(match?.[2] ?? match?.[3]);
-        episode = { ...data, file, desktopId, anime: match?.[1] || filename };
+        episode = { ...data, file, desktopId, number, anime: match?.[1] || filename };
         $("jimaku-title").value = episode.anime;
         $("jimaku-episode").value = Number.isInteger(number) ? String(number) : "";
         $("jimaku-status").textContent = "";
@@ -269,6 +290,7 @@ $("slot").addEventListener("change", event => { slot = event.target.value; showS
 $("preview").addEventListener("change", event => { if (event.target.files[0]) setPreview(event.target.files[0]); });
 player.addEventListener("timeupdate", () => { $("playhead").textContent = clock(player.currentTime * 1000); });
 player.addEventListener("loadedmetadata", () => {
+    if (Number.isFinite(pendingSeek)) seek(pendingSeek);
     if (episode?.duration && Number.isFinite(player.duration) && Math.abs(player.duration * 1000 - episode.duration) > 1500) {
         $("playback-note").textContent = "The preview duration differs from the MKV. Check that their timelines match.";
     }
@@ -278,12 +300,22 @@ player.addEventListener("error", () => {
 });
 
 function seek(ms) {
-    if (player.readyState && Number.isFinite(ms)) {
-        player.currentTime = Math.max(0, ms / 1000);
-        $("playhead").textContent = clock(player.currentTime * 1000);
+    if (!Number.isFinite(ms)) return;
+    if (player.error) return status("The preview cannot play this MKV. Load a matching preview to jump to " + clock(ms) + ".", true);
+    if (!player.readyState) {
+        pendingSeek = ms;
+        return status("Waiting for the preview to load at " + clock(ms) + ".");
     }
+    pendingSeek = null;
+    player.currentTime = Math.max(0, ms / 1000);
+    $("playhead").textContent = clock(player.currentTime * 1000);
 }
-$("jump").onclick = () => seek(timestamp($("window-start").value));
+$("jump").onclick = () => {
+    const start = timestamp(slots[slot].windowStart);
+    if (Number.isFinite(start)) return seek(start);
+    $("window-start").focus();
+    status("The song start is unknown. Check a Jimaku subtitle file or enter an episode start.", true);
+};
 $("back").onclick = () => seek(player.currentTime * 1000 - 2000);
 $("forward").onclick = () => seek(player.currentTime * 1000 + 2000);
 for (const [id, key] of [["query", "query"], ["alternates", "alternates"], ["window-start", "windowStart"], ["window-end", "windowEnd"],
@@ -292,7 +324,11 @@ for (const [id, key] of [["query", "query"], ["alternates", "alternates"], ["win
 }
 $("query").addEventListener("input", showSourceLinks);
 $("window-start").addEventListener("input", showTimingDefaults);
-for (const id of ["window-start", "window-end"]) $(id).addEventListener("input", renderCaptionPreview);
+for (const id of ["window-start", "window-end"]) $(id).addEventListener("input", () => {
+    slots[slot].windowOrigin = "manual";
+    showWindowNote();
+    renderCaptionPreview();
+});
 for (const key of ["first", "last", "second"]) {
     $(key).addEventListener("change", event => {
         slots[slot][key] = event.target.value === "" ? null : Number(event.target.value);
@@ -427,7 +463,7 @@ function songWindow() {
         ? { start, end } : null;
 }
 
-async function checkCaptions(file, url, signal) {
+async function checkCaptions(file, url, signal, selected = false) {
     clearCaptionPreview();
     captionRequest = new AbortController();
     const checking = AbortSignal.any([signal, captionRequest.signal]);
@@ -437,11 +473,141 @@ async function checkCaptions(file, url, signal) {
         const data = await fetchCaptions(url, checking);
         if (checking.aborted) return;
         captionFile = { name: file.name, url, cues: parseCaptions(data, file.name) };
+        if (selected || (Number.isFinite(episode.number) && $("jimaku-episode").value.trim() === String(episode.number))) {
+            for (const name of ["OP", "ED"]) {
+                const state = slots[name];
+                if (state.windowStart || state.windowEnd || state.windowOrigin === "manual" || state.chapter) continue;
+                const offset = fileOffset(state, captionFile);
+                const markers = suggestedWindow(captionFile.cues, name, episode.duration, offset);
+                const lyrics = markers ? [] : lyricWindows(captionFile.cues.map(c => ({
+                    ...c, start: c.start + offset, end: c.end + offset,
+                })), name, episode.duration);
+                if (markers || lyrics.length === 1) {
+                    useWindow(state, markers || lyrics[0], markers ? "Jimaku music markers" : "Jimaku lyric lines");
+                    state.jimakuSync = { url: captionFile.url, offset };
+                }
+            }
+            syncWindowFields();
+        }
         renderCaptionPreview();
     } catch (error) {
         if (!checking.aborted) area.textContent = "Couldn’t read this subtitle file. " + error.message;
     }
 }
+
+function syncWindowFields() {
+    const state = slots[slot];
+    $("window-start").value = state.windowStart;
+    $("window-end").value = state.windowEnd;
+    showWindowNote();
+    showTimingDefaults();
+}
+
+function showWindowNote() {
+    const state = slots[slot];
+    const options = $("gap-options");
+    options.replaceChildren();
+    const gaps = trackGaps[slot];
+    if (!state.chapter && gaps.length && (gaps.length > 1 || state.windowOrigin !== "a gap in MKV dialogue")) {
+        const label = text("label", "Possible " + slot + " gaps in the selected MKV dialogue track");
+        const select = document.createElement("select");
+        select.append(option("Choose a gap", ""), ...gaps.map((g, i) =>
+            option(clock(g.start) + " – " + clock(g.end) + " (" + ((g.end - g.start) / 1000).toFixed(1) + " s)", i)));
+        select.onchange = () => {
+            if (!select.value) return;
+            useGap(state, gaps[Number(select.value)]);
+            syncWindowFields();
+            renderCaptionPreview();
+        };
+        label.append(select);
+        options.append(label);
+    }
+    $("chapter-note").textContent = state.windowOrigin === "a gap in MKV dialogue"
+        ? "Estimated from a gap longer than 1:30 in the selected MKV dialogue track. Check Jimaku to refine the timing."
+        : state.windowOrigin && state.windowOrigin !== "manual" ? "Song window from " + state.windowOrigin + "."
+        : state.chapter && state.windowStart === clock(state.chapter.start) ? "Song start from the MKV chapter named " + state.chapter.title + "."
+        : state.windowStart ? "Song start set to " + state.windowStart + "." : "Set the song start or check an episode subtitle file on Jimaku.";
+}
+
+function useGap(state, gap) {
+    useWindow(state, { start: gap.start, end: Math.min(gap.end, gap.start + defaultSongDuration) }, "a gap in MKV dialogue");
+}
+
+function useWindow(state, range, origin) {
+    state.windowStart = clock(range.start, 3);
+    state.windowEnd = clock(range.end, 3);
+    state.windowOrigin = origin;
+    state.windowFile = origin === "a gap in MKV dialogue" ? null : captionFile.url;
+}
+
+function fileOffset(state, file) {
+    if (state.jimakuSync?.url === file.url) return state.jimakuSync.offset;
+    if (state.source?.provider === "Jimaku" && state.source.url === file.url) return state.source.offset || 0;
+    return 0;
+}
+
+function adjustFile(file, offset) {
+    const state = slots[slot];
+    if (!Number.isSafeInteger(offset) || Math.abs(offset) >= episode.duration)
+        return status("Enter a timing offset in seconds within the episode length.", true);
+    const marker = state.windowOrigin === "Jimaku music markers" && state.windowFile === file.url;
+    const range = marker && suggestedWindow(file.cues, slot, episode.duration, offset);
+    const shiftLyrics = state.windowOrigin === "Jimaku lyric lines" && state.windowFile === file.url;
+    const lyricRange = shiftLyrics && { start: timestamp(state.windowStart) + offset - fileOffset(state, file),
+        end: timestamp(state.windowEnd) + offset - fileOffset(state, file) };
+    if (lyricRange && (lyricRange.start < 0 || lyricRange.end > episode.duration)) return status("That offset moves the lyrics outside the episode.", true);
+    if (marker && !range) return status("That offset moves the song markers outside the episode.", true);
+    if (state.source?.provider === "Jimaku" && state.source.url === file.url && !state.source.whisper) {
+        const change = offset - (state.source.offset || 0);
+        const shifted = state.rows.map(row => {
+            const next = { ...row };
+            for (const key of ["start", "end"]) {
+                if (!row[key]?.trim()) continue;
+                const value = timestamp(row[key]) + change;
+                if (!Number.isFinite(value) || value < 0 || value > Math.ceil(episode.duration / 10) * 10) return null;
+                next[key] = clock(value);
+            }
+            return next;
+        });
+        if (shifted.some(row => !row)) return status("That shift would move a draft line outside the episode or affect an invalid timestamp.", true);
+        state.rows = shifted;
+        state.source.offset = offset;
+    }
+    state.jimakuSync = { url: file.url, offset };
+    if (range) useWindow(state, range, "Jimaku music markers");
+    if (lyricRange) useWindow(state, lyricRange, "Jimaku lyric lines");
+    syncWindowFields();
+    showRows();
+    renderCaptionPreview();
+    status("Jimaku timing for " + slot + " adjusted by " + (offset / 1000) + " s.");
+}
+
+function showAlignment(area, file, offset, range) {
+    const panel = document.createElement("details");
+    panel.append(text("summary", "Adjust Jimaku timing to this MKV"));
+    const label = text("label", "Jimaku offset in seconds (negative = earlier)");
+    const input = document.createElement("input");
+    input.type = "number";
+    input.step = "0.001";
+    input.value = offset / 1000;
+    label.append(input);
+    const apply = text("button", "Apply offset");
+    apply.onclick = () => adjustFile(file, Math.round(input.valueAsNumber * 1000));
+    panel.append(label, apply);
+    if (range) {
+        const compare = text("button", "Compare nearby dialogue times");
+        panel.append(compare);
+        compare.onclick = () => {
+            const match = dialogueOffset(file.cues, localDialogue, { start: range.start - offset, end: range.end - offset });
+            const note = match ? match.count + " nearby caption starts line up at " + match.offset / 1000 + " s. Review the offset and apply it."
+                : "No clear shared offset within 20 seconds. Enter an offset measured against the episode audio.";
+            if (match) input.value = match.offset / 1000;
+            compare.replaceWith(text("p", note));
+        };
+    }
+    area.append(panel);
+}
+
 
 function renderCaptionPreview() {
     if (!captionFile || !episode) return;
@@ -449,24 +615,34 @@ function renderCaptionPreview() {
     const area = $("jimaku-preview");
     area.replaceChildren(text("strong", file.name));
     const range = songWindow();
-    const suggestion = suggestedWindow(file.cues, slot, episode.duration);
-    if (suggestion && (!range || Math.abs(suggestion.start - range.start) > 10 || Math.abs(suggestion.end - range.end) > 10)) {
-        const button = text("button", "Use music markers for " + slot);
+    const state = slots[slot];
+    const offset = fileOffset(state, file);
+    const cues = offset ? file.cues.map(c => ({ ...c, start: c.start + offset, end: c.end + offset })) : file.cues;
+    const suggestion = suggestedWindow(file.cues, slot, episode.duration, offset);
+    const lyrics = suggestion ? [] : lyricWindows(cues, slot, episode.duration);
+    const chapterStart = state.chapter && timestamp(state.windowStart) === timestamp(clock(state.chapter.start));
+    const windows = chapterStart ? [] : suggestion ? [suggestion] : lyrics;
+    for (const candidate of windows) {
+        const origin = suggestion ? "Jimaku music markers" : "Jimaku lyric lines";
+        if (state.windowOrigin === origin && state.windowFile === file.url && range && range.start === candidate.start && range.end === candidate.end) continue;
+        const refine = state.windowOrigin === "a gap in MKV dialogue";
+        const button = text("button", refine ? "Refine " + slot + " with Jimaku" : (suggestion ? "Use music markers for " : "Use timed lyric lines for ") + slot);
         button.onclick = () => {
-            slots[slot].windowStart = $("window-start").value = clock(suggestion.start, 3);
-            slots[slot].windowEnd = $("window-end").value = clock(suggestion.end, 3);
-            showTimingDefaults();
+            useWindow(state, candidate, origin);
+            state.jimakuSync = { url: file.url, offset };
+            syncWindowFields();
             renderCaptionPreview();
-            seek(suggestion.start);
+            seek(candidate.start);
         };
-        area.append(text("p", "This release marks music from " + clock(suggestion.start) + " to "
-            + clock(suggestion.end) + ". Check it against your audio."), button);
+        area.append(text("p", (suggestion ? "Jimaku music markers" : "First and last marked lyric") + " from "
+            + clock(candidate.start) + " to " + clock(candidate.end) + ". Check against your audio."), button);
     }
+    showAlignment(area, file, offset, range || windows[0]);
     if (!range) {
         area.append(text("p", "Set the song window above to check for timed lines."));
         return;
     }
-    const candidates = windowCaptions(file.cues, range.start, range.end);
+    const candidates = windowCaptions(cues, range.start, range.end);
     const period = slot + " (" + clock(range.start) + " – " + clock(range.end) + ")";
     if (!candidates.length) {
         area.append(text("p", "No lyric or dialogue lines in " + period + ". Try Whisper on the episode audio."));
@@ -475,28 +651,44 @@ function renderCaptionPreview() {
     area.append(text("p", candidates.length + " timed captions overlap " + period + ". Select the lyrics you hear."));
     const list = document.createElement("div");
     list.className = "caption-list";
+    const filter = document.createElement("select");
+    filter.setAttribute("aria-label", "Captions to show");
+    filter.append(option("All Jimaku captions", "all"), option("Only captions without overlapping MKV dialogue", "missing"));
     const chosen = [];
     for (const cue of candidates) {
         const label = document.createElement("label");
         const check = document.createElement("input");
         check.type = "checkbox";
-        label.append(check, " " + clock(cue.start) + " – " + clock(cue.end) + "  " + cue.text);
+        const overlap = overlapsDialogue(cue, localDialogue);
+        label.append(check, " " + clock(cue.start) + " – " + clock(cue.end) + "  " + cue.text
+            + (overlap ? "" : " · No MKV dialogue"));
         list.append(label);
-        chosen.push(check);
+        chosen.push({ check, label, overlap });
     }
     const all = text("button", "Select all");
+    const count = text("p", "");
+    filter.onchange = () => {
+        const missing = filter.value === "missing";
+        for (const { label, overlap, check } of chosen) {
+            label.hidden = missing && overlap;
+            if (label.hidden) check.checked = false;
+        }
+        count.textContent = missing ? chosen.filter(item => !item.overlap).length + " captions without overlapping dialogue on the selected MKV track." : "";
+        all.textContent = "Select all";
+    };
     all.onclick = () => {
-        const select = chosen.some(check => !check.checked);
-        for (const check of chosen) check.checked = select;
+        const visible = chosen.filter(item => !item.label.hidden);
+        const select = visible.some(item => !item.check.checked);
+        for (const { check } of visible) check.checked = select;
         all.textContent = select ? "Clear selection" : "Select all";
     };
     const apply = text("button", "Import selected lines");
     apply.onclick = () => {
-        const rows = candidates.filter((_, i) => chosen[i].checked).map(cue => ({
+        const rows = candidates.filter((_, i) => chosen[i].check.checked).map(cue => ({
             text: cue.text, start: clock(cue.start), end: clock(cue.end), include: true,
         }));
         if (!rows.length) return status("Select at least one Jimaku caption to import.", true);
-        if (!setSource({ provider: "Jimaku", title: file.name, url: file.url, synced: "",
+        if (!setSource({ provider: "Jimaku", title: file.name, url: file.url, offset, synced: "",
             plain: rows.map(row => row.text).join("\n") })) return;
         sourceRequest?.abort();
         slots[slot].rows = rows;
@@ -504,7 +696,7 @@ function renderCaptionPreview() {
         showTiming();
         status("Imported " + rows.length + " timed Jimaku lines into " + slot + ".");
     };
-    area.append(list, all, apply);
+    area.append(filter, count, list, all, apply);
 }
 
 
@@ -568,7 +760,7 @@ async function listJimakuFiles(id, number, key, signal) {
         row.append(link);
         if (/\.(ass|ssa|srt)$/i.test(file.name)) {
             const check = text("button", "Check song lines");
-            check.onclick = () => checkCaptions(file, url.href, signal);
+            check.onclick = () => checkCaptions(file, url.href, signal, true);
             row.append(check);
             readable.push({ file, url });
         }
@@ -1035,6 +1227,13 @@ $("restore").onchange = async event => {
                 if (typeof song[key] === "string") base[key] = song[key];
             }
             if (song.secondMode === "shift") base.secondMode = "shift";
+            if (["Jimaku music markers", "Jimaku lyric lines", "a gap in MKV dialogue", "manual"].includes(song.windowOrigin)) {
+                base.windowOrigin = song.windowOrigin;
+                base.windowFile = song.windowFile;
+            }
+            if (typeof song.jimakuSync?.url === "string" && Number.isSafeInteger(song.jimakuSync.offset)) {
+                base.jimakuSync = { url: song.jimakuSync.url, offset: song.jimakuSync.offset };
+            }
             base.rows = song.rows;
             if (song.source && typeof song.source.plain === "string" && typeof song.source.synced === "string") {
                 base.source = song.source;

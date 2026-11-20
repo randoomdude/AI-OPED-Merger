@@ -28,10 +28,10 @@ export async function fetchCaptions(url, signal) {
 export function parseCaptions(content, name) {
     const cues = [];
     const clean = content.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
-    function add(start, end, raw) {
+    function add(start, end, raw, style = "") {
         const text = rubyMarkup(raw).replace(/<\/?(?:b|i|u|s|font)(?:\s[^>]*)?>/gi, "")
             .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").trim();
-        if (Number.isFinite(start) && end > start && text) cues.push({ start, end, text });
+        if (Number.isFinite(start) && end > start && text) cues.push({ start, end, text, style });
     }
     if (/\.srt$/i.test(name)) {
         for (const block of clean.split(/\n[ \t]*\n/)) {
@@ -51,7 +51,7 @@ export function parseCaptions(content, name) {
             const raw = values.slice(fields.length - 1).join(",");
             if (/\{[^}]*\\p[1-9]/.test(raw)) continue;
             add(timestamp(values[fields.indexOf("start")]), timestamp(values[fields.indexOf("end")]),
-                raw.replace(/\{[^}]*\}/g, "").replace(/\\[Nn]/g, "\n").replace(/\\h/g, " "));
+                raw.replace(/\{[^}]*\}/g, "").replace(/\\[Nn]/g, "\n").replace(/\\h/g, " "), values[fields.indexOf("style")] || "");
         }
     }
     if (!cues.length) throw Error("No readable timed captions were found in this file.");
@@ -65,7 +65,7 @@ function musicMarker(text) {
     return /^[♪♫♬~〜ー]+$/.test(s) ? "music" : "";
 }
 
-export function suggestedWindow(cues, slot, duration) {
+export function suggestedWindow(cues, slot, duration, offset = 0) {
     if (!Number.isFinite(duration)) return null;
     let first;
     const pairs = [];
@@ -73,7 +73,7 @@ export function suggestedWindow(cues, slot, duration) {
         const marker = musicMarker(cue.text);
         if (marker === "start") first = cue;
         if (marker === "end" && first) {
-            const start = first.start, end = Math.min(cue.end, duration);
+            const start = Math.max(0, first.start + offset), end = Math.min(cue.end + offset, duration);
             if (end - start >= 60_000 && end - start <= 120_000 &&
                 (slot === "OP" ? start < duration / 2 : start >= duration / 2)) pairs.push({ start, end });
             first = null;
@@ -82,12 +82,28 @@ export function suggestedWindow(cues, slot, duration) {
     return pairs.length === 1 ? pairs[0] : null;
 }
 
+export function lyricWindows(cues, slot, duration) {
+    const groups = [];
+    for (const cue of cues) {
+        if (musicMarker(cue.text) || !(/[♪♫♬]/.test(cue.text) ||
+            /(?:^|[^a-z])(?:op|ed|opening|ending|karaoke|lyrics?|songs?)(?:$|[^a-z])/i.test(cue.style))) continue;
+        const last = groups.at(-1);
+        if (last && cue.start <= last.end + 12_000) {
+            last.end = Math.max(last.end, cue.end);
+            last.count++;
+        } else groups.push({ start: cue.start, end: cue.end, count: 1 });
+    }
+    return groups.filter(g => g.count >= 3 && g.end - g.start >= 20_000 && g.end - g.start <= 125_000 &&
+        (slot === "OP" ? g.start < duration / 2 : g.start >= duration / 2) && g.end > 0 && g.start < duration)
+        .map(g => ({ start: Math.max(0, g.start), end: Math.min(duration, g.end) }));
+}
+
 export function windowCaptions(cues, start, end) {
     const seen = new Set();
     return cues.filter(cue => cue.start < end && cue.end > start && !musicMarker(cue.text))
         .map(cue => ({ ...cue, start: Math.max(start, cue.start), end: Math.min(end, cue.end) }))
         .filter(cue => {
-            const key = JSON.stringify(cue);
+            const key = JSON.stringify([cue.start, cue.end, cue.text]);
             if (seen.has(key) || Math.round(cue.end / 10) <= Math.round(cue.start / 10)) return false;
             seen.add(key);
             return true;
