@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https://lrclib.net; media-src blob:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https://lrclib.net https://graphql.anilist.co; media-src blob:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
   <title>AI OP/ED Merger</title>
   <link rel="stylesheet" href="./style.css">
   <script src="./vendor/fflate.min.js" defer></script>
@@ -57,7 +57,7 @@
       <h2>Source lyrics</h2>
       <p id="song-title" class="muted"></p>
       <div class="row">
-        <label class="fill">Song title or artist<input id="query" type="search"></label>
+        <label class="fill">Song, artist, or anime title<input id="query" type="search"></label>
         <button id="search" type="button">Search LRCLIB</button>
       </div>
       <p id="search-status" role="status" class="muted"></p>

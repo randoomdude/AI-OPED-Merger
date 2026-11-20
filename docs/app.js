@@ -7,6 +7,7 @@ const client = "AI-OPED-Merger/0.1.1 (https://github.com/randoomdude/AI-OPED-Mer
 const catalog = await fetch("./example-themes.json", { cache: "no-cache" })
     .then(response => response.json()).catch(() => null);
 const shows = Array.isArray(catalog) ? catalog : catalog ? [catalog] : [];
+const animeTitleCache = new Map();
 let episode;
 let selectedTrack;
 let worker;
@@ -49,15 +50,37 @@ function chapterFor(name) {
     return episode.chapters.find(chapter => pattern.test(chapter.title.trim()));
 }
 
+function titleKey(title) {
+    return title.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+function catalogShow(title) {
+    const key = titleKey(title);
+    return shows.find(entry => entry.aliases.some(alias => titleKey(alias) === key));
+}
+
+function titleWithoutYear(title) {
+    return title.normalize("NFKC").replace(/\s*\((?:19|20)\d{2}\)$/, "").trim();
+}
+
+function showForSearch(state, query) {
+    const known = catalogShow(query);
+    if (known) return known;
+    const localShow = catalogShow(state.anime);
+    const matchesSong = [state.song?.search_query, state.song?.title].includes(query);
+    const matchesUnqualifiedTitle = localShow?.aliases.some(alias =>
+        titleKey(titleWithoutYear(alias)) === titleKey(query));
+    return matchesSong || matchesUnqualifiedTitle ? localShow : null;
+}
+
 function stateFor(name) {
     const chapter = chapterFor(name);
     const filename = episode.file.name.replace(/^(?:\[[^\]]+\]\s*)+/, "");
     const anime = filename.match(/^(.+?)\s+-\s+\d+/)?.[1] || filename.replace(/\.mkv$/i, "");
-    const normalize = title => title.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
-    const show = shows.find(entry => entry.aliases.some(alias => normalize(anime) === normalize(alias)));
+    const show = catalogShow(anime);
     const song = show?.songs.find(item => item.slot === name) || null;
     return {
-        chapter, song, windowStart: clock(chapter?.start), windowEnd: "",
+        chapter, anime, song, windowStart: clock(chapter?.start), windowEnd: "",
         query: song?.search_query || song?.title || anime, source: null, lines: [], rows: [],
         first: 0, last: 0, second: null, firstEpisode: "", secondEpisode: "",
         secondMode: "drift", beforeCutEnd: "",
@@ -100,7 +123,6 @@ function showSlot() {
     $("chapter-note").textContent = state.chapter
         ? "Song start from the MKV chapter named " + state.chapter.title + "."
         : "Enter the song’s start in the episode.";
-    $("song-title").textContent = state.song ? state.song.title + " · " + state.song.artist : "";
     $("query").value = state.query;
     $("source-url").value = state.source?.url || state.song?.sources.uta_net || "";
     $("paste").value = "";
@@ -113,6 +135,8 @@ function showSlot() {
 function showSourceLinks() {
     const state = slots[slot];
     const query = state.query.trim();
+    const song = showForSearch(state, query)?.songs.find(item => item.slot === slot) ?? state.song;
+    $("song-title").textContent = song ? song.title + " · " + song.artist : "";
     for (const [id, key, name, searchUrl] of [
         ["uta-net", "uta_net", "Uta-Net", "https://www.uta-net.com/"],
         ["uta-ten", "uta_ten", "UtaTen", query
@@ -120,7 +144,7 @@ function showSourceLinks() {
             : "https://utaten.com/search"],
     ]) {
         const link = $(id);
-        const songPage = state.song?.sources[key];
+        const songPage = song?.sources[key];
         link.href = songPage || searchUrl;
         link.textContent = songPage ? name + " lyrics" : "Search " + name;
         link.onclick = () => {
@@ -237,15 +261,19 @@ for (const button of document.querySelectorAll("[data-capture]")) {
     };
 }
 
-async function lrclib(path) {
+function beginSourceRequest() {
     sourceRequest?.abort();
-    const request = new AbortController();
-    sourceRequest = request;
+    sourceRequest = new AbortController();
+    return sourceRequest.signal;
+}
+
+async function lrclib(path, signal) {
+    signal.throwIfAborted();
     if (Date.now() < retryAt) throw Error("LRCLIB asked this app to wait. Retry in " + Math.ceil((retryAt - Date.now()) / 1000) + " seconds.");
-    const timeout = setTimeout(() => request.abort("timeout"), 20000);
+    const timeout = AbortSignal.timeout(20000);
     try {
         const response = await fetch("https://lrclib.net" + path, {
-            headers: { "Lrclib-Client": client }, signal: request.signal,
+            headers: { "Lrclib-Client": client }, signal: AbortSignal.any([signal, timeout]),
         });
         if (response.status === 429 || response.status === 503) {
             const retry = response.headers.get("Retry-After");
@@ -256,12 +284,64 @@ async function lrclib(path) {
         if (!response.ok) throw Error("LRCLIB returned HTTP " + response.status + ".");
         return await response.json();
     } catch (error) {
-        if (request.signal.reason === "timeout") throw Error("LRCLIB took too long to respond.");
+        signal.throwIfAborted();
+        if (timeout.aborted) throw Error("LRCLIB took too long to respond.");
         if (error instanceof TypeError) throw Error("Could not reach LRCLIB. Try again or paste the source lyrics.");
         throw error;
-    } finally {
-        clearTimeout(timeout);
     }
+}
+
+async function animeTitles(query, signal) {
+    const title = titleWithoutYear(query);
+    const year = Number(query.normalize("NFKC").match(/\((\d{4})\)$/)?.[1]);
+    const key = titleKey(query);
+    if (animeTitleCache.has(key)) return animeTitleCache.get(key);
+    try {
+        const response = await fetch("https://graphql.anilist.co", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                query: "query($title:String){Page(perPage:8){media(type:ANIME,search:$title){seasonYear title{english romaji native} synonyms}}}",
+                variables: { title },
+            }),
+            signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
+        });
+        if (!response.ok) return [];
+        const { data } = await response.json();
+        if (!Array.isArray(data?.Page?.media)) return [];
+        const matches = data.Page.media.filter(media =>
+            (!year || media.seasonYear === year) && [...Object.values(media.title), ...media.synonyms].some(name =>
+                name && titleKey(titleWithoutYear(name)) === titleKey(title)));
+        const titles = matches.length === 1 ? Object.values(matches[0].title).filter(Boolean) : [];
+        animeTitleCache.set(key, titles);
+        return titles;
+    } catch {
+        signal.throwIfAborted();
+        return [];
+    }
+}
+
+async function searchLyrics(variants, signal) {
+    const queries = new Set(variants.map(params => new URLSearchParams(params).toString()));
+    const records = new Map();
+    let failure;
+    for (const query of queries) {
+        try {
+            const results = await lrclib("/api/v2/search?" + query, signal);
+            for (const record of results) {
+                if (Number.isInteger(record.id) && (record.hasPlainLyrics || record.hasSyncedLyrics)) records.set(record.id, record);
+            }
+        } catch (error) {
+            signal.throwIfAborted();
+            failure = error;
+            if (Date.now() < retryAt) break;
+        }
+    }
+    if (!records.size && failure) throw failure;
+    return [...records.values()];
+}
+
+function animeQueries(titles) {
+    return [...new Set(titles.map(titleWithoutYear))].map(q => ({ q }));
 }
 
 function setSource(source) {
@@ -283,20 +363,35 @@ function setSource(source) {
 
 $("search").onclick = async () => {
     const query = $("query").value.trim();
-    if (!query) return status("Enter a song title or artist.", true);
+    if (!query) return status("Enter a song, artist, or anime title.", true);
     const searching = slots[slot];
+    const show = showForSearch(searching, query);
+    const song = show?.songs.find(item => item.slot === slot);
+    const signal = beginSourceRequest();
     $("search-status").textContent = "Searching LRCLIB…";
     $("results").replaceChildren();
     try {
-        const song = searching.song;
-        const exact = song?.lrclib_search && query === song.search_query;
-        const records = await lrclib("/api/v2/search?" + new URLSearchParams(exact ? song.lrclib_search : { q: query }));
-        if (slots[slot] !== searching) return;
-        const rows = records.filter(record => Number.isInteger(record.id) && (record.hasPlainLyrics || record.hasSyncedLyrics));
-        rows.sort((a, b) => Number(b.id === searching.song?.sources.lrclib_id) - Number(a.id === searching.song?.sources.lrclib_id));
+        let rows;
+        if (song?.lrclib_search) {
+            const variants = [song.lrclib_search, ...(song.lrclib_alternates ?? [])];
+            rows = await searchLyrics(variants, signal);
+            if (!rows.length && song.lrclib_alternates?.length) {
+                const songTitles = [...new Set(variants.map(entry => entry.track_name))];
+                const artists = variants.map(entry => titleKey(entry.artist_name));
+                const candidates = [...animeQueries(show.aliases), ...songTitles.map(track_name => ({ track_name }))];
+                rows = (await searchLyrics(candidates, signal)).filter(record =>
+                    songTitles.some(title => titleKey(record.trackName).startsWith(titleKey(title))) && artists.includes(titleKey(record.artistName)));
+            }
+        } else {
+            const titles = show?.aliases ?? await animeTitles(query, signal);
+            rows = await searchLyrics([{ q: song?.search_query || query }, ...animeQueries(titles)], signal);
+        }
+        if (signal.aborted || slots[slot] !== searching) return;
+        rows.sort((a, b) => Number(b.id === song?.sources.lrclib_id) - Number(a.id === song?.sources.lrclib_id));
         $("search-status").textContent = rows.length
             ? "Choose the matching song and recording."
-            : "No lyrics found on LRCLIB. Try the song title or use another lyrics source below.";
+            : song ? "No LRCLIB match for " + song.title + " by " + song.artist + ". Try a lyrics source below."
+                : "No lyrics found on LRCLIB. Try the song title or use another lyrics source below.";
         for (const record of rows) {
             const label = document.createElement("div");
             label.append(text("strong", record.trackName), text("span",
@@ -306,17 +401,18 @@ $("search").onclick = async () => {
             button.type = "button";
             button.setAttribute("aria-label", "Import " + record.trackName);
             button.onclick = async () => {
+                const importing = beginSourceRequest();
                 try {
                     $("search-status").textContent = "Importing lyrics…";
-                    const result = await lrclib("/api/get/" + record.id);
-                    if (slots[slot] !== searching) return;
+                    const result = await lrclib("/api/get/" + record.id, importing);
+                    if (importing.aborted || slots[slot] !== searching) return;
                     if (result.id !== record.id || !(result.plainLyrics || result.syncedLyrics)) throw Error("The selected record has no lyrics.");
                     setSource({ provider: "LRCLIB", url: "https://lrclib.net/api/get/" + result.id,
                         title: result.trackName, artist: result.artistName, duration: result.duration,
                         plain: result.plainLyrics || "", synced: result.syncedLyrics || "" });
                     $("search-status").textContent = "";
                 } catch (error) {
-                    if (error?.name !== "AbortError") $("search-status").textContent = error?.message || "Import cancelled.";
+                    if (!importing.aborted) $("search-status").textContent = error?.message || "Import cancelled.";
                 }
             };
             const row = document.createElement("div");
@@ -325,7 +421,7 @@ $("search").onclick = async () => {
             $("results").append(row);
         }
     } catch (error) {
-        if (error?.name !== "AbortError") $("search-status").textContent = error?.message || "Search cancelled.";
+        if (!signal.aborted) $("search-status").textContent = error?.message || "Search cancelled.";
     }
 };
 

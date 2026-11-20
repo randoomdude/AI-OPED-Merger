@@ -1,6 +1,6 @@
 [
 {
-  "aliases": ["FX Senshi Kurumi-chan", "FX Fighter Kurumi-chan"],
+  "aliases": ["FX Senshi Kurumi-chan", "FX Fighter Kurumi-chan", "FX戦士くるみちゃん"],
   "metadata_source": "https://fxkurumi-info.com/music/",
   "songs": [
     {
@@ -56,6 +56,43 @@
         "uta_net": "https://www.uta-net.com/song/375804/",
         "uta_ten": "https://utaten.com/lyric/hw25070250/",
         "lrclib_id": 34272597
+      }
+    }
+  ]
+},
+{
+  "aliases": [
+    "Magic Knight Rayearth (2026)",
+    "魔法騎士レイアース (2026)",
+    "Majikku Naito Reiasu (2026)"
+  ],
+  "metadata_source": "https://rayearth-anime.com/music/",
+  "songs": [
+    {
+      "slot": "OP",
+      "title": "乙女の剣",
+      "artist": "十明",
+      "search_query": "乙女の剣 十明",
+      "lrclib_search": { "track_name": "乙女の剣", "artist_name": "十明" },
+      "lrclib_alternates": [{ "track_name": "Otome no Tsurugi", "artist_name": "Toaka" }],
+      "sources": {
+        "uta_net": "https://www.uta-net.com/song/400597/",
+        "uta_ten": "https://utaten.com/lyric/mi26100821/"
+      }
+    },
+    {
+      "slot": "ED",
+      "title": "星灯",
+      "artist": "Kawaguchi Yurina",
+      "search_query": "星灯 Kawaguchi Yurina",
+      "lrclib_search": { "track_name": "星灯", "artist_name": "Kawaguchi Yurina" },
+      "lrclib_alternates": [
+        { "track_name": "星灯", "artist_name": "川口ゆりな" },
+        { "track_name": "Hoshiakari", "artist_name": "Yurina Kawaguchi" }
+      ],
+      "sources": {
+        "uta_net": "https://www.uta-net.com/song/400881/",
+        "uta_ten": "https://utaten.com/lyric/sz26101631/"
       }
     }
   ]
