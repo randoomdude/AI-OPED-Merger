@@ -158,8 +158,12 @@ def main():
             raise ValueError("No matching chapter. Pass --start to set the song's episode start.")
         chapter_end = chapter[2] if chapter and chapter[2] > start else float("inf")
         end = args.end if args.end is not None else min(start + 94, chapter_end, duration)
-        if not 0 <= start < end <= duration:
-            raise ValueError("The song window must fit inside the episode.")
+        if not 0 <= start < end:
+            raise ValueError(f"The song end ({end:.3f} s) must be later than its start ({start:.3f} s).")
+        # FFmpeg prints the container duration to the nearest hundredth of a second.
+        # Extraction stops at EOF; transcribe() also bounds timings by the samples actually read.
+        if end > duration + 0.005:
+            raise ValueError(f"The song ends at {end:.3f} s. FFmpeg reports an episode length of {duration:.2f} s.")
         output = args.output or episode.with_name(episode.stem + f".{slot.lower()}.whisper.json")
         if output.exists():
             raise ValueError(f"{output.name} already exists. Pick another output path or move the previous timing file.")

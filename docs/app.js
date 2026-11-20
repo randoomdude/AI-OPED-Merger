@@ -459,8 +459,11 @@ function songWindow() {
     const state = slots[slot];
     const { start, end: defaultEnd } = timingDefaults(state);
     const end = state.windowEnd.trim() ? timestamp(state.windowEnd) : defaultEnd;
-    return [start, end].every(Number.isFinite) && start >= 0 && end > start && end <= (episode.duration ?? Infinity)
-        ? { start, end } : null;
+    const duration = episode.duration ?? Infinity;
+    // Older projects stored end times rounded to centiseconds. Snap that last display tick to EOF.
+    const clipEnd = Math.min(end, duration);
+    return [start, end].every(Number.isFinite) && start >= 0 && clipEnd > start && end <= Math.max(duration, Math.round(duration), Math.round(duration / 10) * 10)
+        ? { start, end: clipEnd } : null;
 }
 
 async function checkCaptions(file, url, signal, selected = false) {
@@ -990,8 +993,8 @@ async function applyWhisper(read) {
         state.source = { ...(source ?? { provider: "Local Whisper", url: "", plain: rows.map(row => row.text).join("\n"), synced: "" }),
             whisper: true };
         state.rows = rows;
-        state.windowStart ||= clock(data.start_ms);
-        state.windowEnd ||= clock(data.end_ms);
+        state.windowStart ||= clock(data.start_ms, 3);
+        state.windowEnd ||= clock(data.end_ms, 3);
         $("window-start").value = state.windowStart;
         $("window-end").value = state.windowEnd;
         showTiming();
