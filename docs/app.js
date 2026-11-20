@@ -1099,36 +1099,53 @@ async function applyWhisper(read) {
             ? matched + " of " + reference.filter(row => row.include).length + " selected lines matched. Review the proposed times."
             : "Whisper found " + matched + " transcript lines. Choose whether to use them as lyrics."));
         const changes = reference.flatMap((row, i) => rows[i] !== row ? [{ index: i, before: row, after: rows[i] }] : []);
-        const accepted = new Set();
+        const selectedLines = new Set(changes.map(change => change.index));
+        const actions = document.createElement("div");
+        actions.className = "row";
+        const cutButton = reference.length ? offer("Apply TV cut", () => applyReviewed(true)) : null;
+        const timingButton = changes.length ? offer("Apply timing only", () => applyReviewed(false)) : null;
+        if (cutButton) {
+            cutButton.className = "primary";
+            review.append(text("p", "The TV cut includes the checked lines. Choose “Apply timing only” to keep your current export selection."));
+            updateButtons();
+        }
+        function updateButtons() {
+            const count = selectedLines.size;
+            cutButton.textContent = "Apply TV cut (" + count + (count === 1 ? " line)" : " lines)");
+            cutButton.disabled = count === 0;
+            if (timingButton) timingButton.disabled = !changes.some(change => selectedLines.has(change.index));
+        }
+        function lineCheckbox(index) {
+            const input = document.createElement("input");
+            input.type = "checkbox";
+            input.checked = selectedLines.has(index);
+            input.onchange = () => {
+                if (input.checked) selectedLines.add(index);
+                else selectedLines.delete(index);
+                updateButtons();
+            };
+            return input;
+        }
         for (const {index, before, after} of changes) {
-            accepted.add(index);
-            const label = text("label", before.text + " · " + (before.start || "untimed") + " – " + (before.end || "untimed")
+            const label = text("label", "Line " + (index + 1) + " · " + before.text + " · " + (before.start || "untimed") + " – " + (before.end || "untimed")
                 + " → " + after.start + " – " + after.end, "inline");
-            const check = document.createElement("input");
-            check.type = "checkbox";
-            check.checked = true;
-            check.onchange = () => check.checked ? accepted.add(index) : accepted.delete(index);
-            label.prepend(check);
+            label.prepend(lineCheckbox(index));
             const jump = text("button", "Hear proposed time");
             jump.onclick = () => seek(timestamp(after.start));
             const item = document.createElement("div");
             item.append(label, jump);
             review.append(item);
         }
-        const omitted = new Set();
         const uncertain = reference.map((row, index) => ({row, index}))
             .filter(({row, index}) => row.include && rows[index] === row);
         if (uncertain.length) {
             const panel = document.createElement("details");
             panel.append(text("summary", "Review " + uncertain.length + " lines Whisper could not place"));
-            panel.append(text("p", "These lines keep their current timing. Check Exclude only for a line you recognize as absent from the TV edit."));
+            panel.append(text("p", "Check any additional lyric you hear in the TV cut. It will use its draft time."));
             for (const {row, index} of uncertain) {
                 const item = document.createElement("div");
-                const label = text("label", "Exclude line " + (index + 1) + " · " + row.text, "inline");
-                const input = document.createElement("input");
-                input.type = "checkbox";
-                input.onchange = () => input.checked ? omitted.add(index) : omitted.delete(index);
-                label.prepend(input);
+                const label = text("label", "Include line " + (index + 1) + " · " + row.text, "inline");
+                label.prepend(lineCheckbox(index));
                 item.append(label);
                 if (Number.isFinite(timestamp(row.start))) {
                     const jump = text("button", "Go to draft time " + row.start);
@@ -1148,7 +1165,18 @@ async function applyWhisper(read) {
                 }
                 try { action(); } catch (error) { status(error.message, true); }
             };
-            review.append(button);
+            actions.append(button);
+            return button;
+        }
+        function applyReviewed(tvCut) {
+            const next = reference.map((original, index) => {
+                if (selectedLines.has(index)) return rows[index];
+                if (tvCut && original.include) return { ...original, include: false };
+                return original;
+            });
+            apply(next);
+            if (tvCut) status("Applied the TV cut with " + selectedLines.size + " of " + reference.length
+                + (selected === "OP" ? " opening" : " ending") + " lines selected for export.");
         }
         function apply(next, replace = false) {
             if (replace && !setSource({provider: "Local Whisper", plain: next.map(row => row.text).join("\n"), synced: "", url: ""})) return;
@@ -1168,10 +1196,9 @@ async function applyWhisper(read) {
             const delta = Math.round((offsets[mid] + offsets[Math.floor((offsets.length-1)/2)]) / 20) * 10;
             offer("Shift all lines by " + (delta / 1000) + " s", () => apply(shiftRows(reference, delta, opened.duration)));
         }
-        if (reference.length) offer("Apply reviewed timing and exclusions", () =>
-            apply(rows.map((row, index) => omitted.has(index) ? {...row, include: false} : accepted.has(index) ? row : reference[index])));
         offer(reference.length ? "Replace lyrics with Whisper transcription…" : "Use Whisper transcription", () =>
             apply(whisperDraft(data, []).rows, true));
+        review.append(actions);
         status("Whisper comparison ready. Your draft is unchanged.");
     } catch (error) {
         status(error instanceof SyntaxError ? "Choose a valid timing JSON file from the Whisper helper." : error.message, true);

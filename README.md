@@ -44,7 +44,8 @@ Under **Export**, choose furigana centered above each annotated word, inline par
 
 1. With Python, FFmpeg, and [OpenAI Whisper](https://github.com/openai/whisper) installed, download `docs/whisper-helper.py` and run `python whisper-helper.py`. Choose your MKV and enter `OP` or `ED`. The first run with a new model may download its weights. The episode audio is processed locally.
 2. Open the same episode and song in the app. If you have the lyrics, use **Paste lyrics or LRC** first. Under **Time from episode audio**, import the `.whisper.json` file saved beside the episode.
-3. Review the estimated cues. Compare the proposed times with the draft. Apply the suggested whole-song shift or only the matched line times. Unmatched lines retain their times and inclusion settings when applying matched times. To use the transcription as lyrics, choose the separate transcription button.
+3. For full-song lyrics, review the matches and choose **Apply TV cut**. The button shows the number of lines that will be selected for export. Each matched occurrence starts checked, so a repeated verse can be included once. Under **Review lines Whisper could not place**, check any additional lyrics you heard to keep them at their draft times. All source rows and their furigana stay in **Line timing**, where you can re-enable them individually.
+4. To verify an already edited subtitle set, choose **Apply timing only**. It updates the checked matches and preserves the existing export selection. A whole-song shift and transcription replacement are separate actions.
 
 The helper uses the matching chapter and prefers a Japanese audio track. On the command line you can set a different window with `--start` and `--end`, or use `--output` to save the timing file elsewhere.
 
