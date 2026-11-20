@@ -1102,16 +1102,16 @@ async function applyWhisper(read) {
         const selectedLines = new Set(changes.map(change => change.index));
         const actions = document.createElement("div");
         actions.className = "row";
-        const cutButton = reference.length ? offer("Apply TV cut", () => applyReviewed(true)) : null;
+        const cutButton = reference.length ? offer("Apply reviewed timing and exclusions", () => applyReviewed(true)) : null;
         const timingButton = changes.length ? offer("Apply timing only", () => applyReviewed(false)) : null;
         if (cutButton) {
             cutButton.className = "primary";
-            review.append(text("p", "The TV cut includes the checked lines. Choose “Apply timing only” to keep your current export selection."));
+            review.append(text("p", "Only checked lines will be included in the TV cut. Check any missed lyrics before applying, or re-enable them later in Line timing."));
             updateButtons();
         }
         function updateButtons() {
             const count = selectedLines.size;
-            cutButton.textContent = "Apply TV cut (" + count + (count === 1 ? " line)" : " lines)");
+            cutButton.textContent = "Apply reviewed timing and exclusions (" + count + (count === 1 ? " line)" : " lines)");
             cutButton.disabled = count === 0;
             if (timingButton) timingButton.disabled = !changes.some(change => selectedLines.has(change.index));
         }
