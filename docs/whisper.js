@@ -104,23 +104,50 @@ function matchLines(lines, audio) {
     return matches;
 }
 
+// The older ASS exporter put a smaller reading above the complete sung line.
+function referenceText(row) {
+    if (!row.events?.length) return lyricForms(row.text).base;
+    return row.events.map(({content}) => {
+        const legacy = content.match(/^\{\\fs(\d+)\}.*?\\N\{\\fs(\d+)\}([\s\S]*)$/);
+        if (legacy && Number(legacy[1]) < Number(legacy[2])) return legacy[3];
+        // Positioned ruby events in the current exporter use a custom thin border.
+        if (/^\{\\an8\\q2\\pos\([^}]+\\fnMeiryo[^}]+\\bord[\d.]+\}/.test(content)) return "";
+        return content;
+    }).join("").replace(/\{[^}]*\}/g, "").replace(/\\[Nnh]/g, " ");
+}
+
 export function whisperDraft(data, reference) {
     if (!reference.length) {
         const rows = transcriptRows(data.segments);
         return { rows, matched: rows.filter(row => row.include).length };
     }
     const audio = timedCharacters(data.segments);
-    const lines = reference.map(row => row.include ? characters(lyricForms(row.text).base) : []);
+    const lines = reference.map(row => row.include ? characters(referenceText(row)) : []);
     const matches = matchLines(lines, audio);
+    // An unambiguous exact phrase can move across other lines in the TV edit.
+    const audioText = audio.map(item => item.char).join("");
+    const phrases = lines.map(chars => chars.join(""));
+    const owners = new Int32Array(audio.length).fill(-1);
+    const exact = phrases.map((phrase, index) => {
+        if (phrase.length < 5 || phrases.filter(value => value.includes(phrase)).length !== 1) return null;
+        const offset = audioText.indexOf(phrase);
+        if (offset < 0 || audioText.indexOf(phrase, offset + 1) !== -1) return null;
+        const first = Array.from(audioText.slice(0, offset)).length;
+        const hits = lines[index].map((_, j) => first + j);
+        if (hits.some((hit, j) => j && audio[hit].start - audio[hit - 1].end > 1500)) return null;
+        return hits;
+    });
+    exact.forEach((hits, index) => hits?.forEach(hit => { owners[hit] = owners[hit] === -1 ? index : -2; }));
     let matched = 0;
     const rows = reference.map((row, index) => {
         if (!row.include) return row;
-        const hits = matches[index];
+        const hits = exact[index] ?? matches[index];
+        if (hits.some(hit => owners[hit] !== -1 && owners[hit] !== index)) return row;
         const first = hits[0];
         const last = hits.at(-1);
         const length = lines[index].length;
-        const threshold = length <= 4 ? length : Math.ceil(length * 0.6);
-        if (hits.length && hits.length >= threshold && hits.length >= (last - first + 1) * 0.6) {
+        const threshold = length <= 4 ? length : Math.ceil(length * 0.75);
+        if (hits.length && hits.length >= threshold && hits.length >= (last - first + 1) * 0.75 && !hits.some((hit, j) => j && audio[hit].start - audio[hits[j-1]].end > 1500)) {
             const cue = draftRow(row.text, audio[first].start, audio[last].end);
             if (cue.include) {
                 matched++;

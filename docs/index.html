@@ -102,6 +102,7 @@
       </details>
       <details id="audio-options" open>
         <summary>Time from episode audio with Whisper</summary>
+        <label id="hint-label" hidden>Spelling hints for local Whisper (optional)<input id="whisper-hint" maxlength="160" placeholder="A name or short phrase you hear"></label>
         <button id="run-whisper" type="button" hidden>Time with local Whisper</button>
         <p id="whisper-progress" class="muted" role="status" hidden></p>
         <p id="helper-instructions" class="muted">Run the <a href="./whisper-helper.py" download>Whisper helper</a> with Python, select this MKV, and choose OP or ED. Apply pasted lyrics first if you want to keep their wording.</p>

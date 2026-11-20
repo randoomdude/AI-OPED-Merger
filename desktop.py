@@ -153,7 +153,7 @@ class Desktop:
             if self._process and self._process.poll() is None:
                 self._process.terminate()
 
-    def time_song(self, token, slot, start_ms, end_ms):
+    def time_song(self, token, slot, start_ms, end_ms, hint=""):
         path = self._episode(token)
         if slot not in ("OP", "ED") or not all(type(n) in (int, float) for n in (start_ms, end_ms)) or not 0 <= start_ms < end_ms:
             raise ValueError("Choose a song and enter a valid episode start and end.")
@@ -164,7 +164,7 @@ class Desktop:
                 result = Path(work) / "timing.json"
                 python = whisper_python()
                 self._run([str(python), str(DOCS / "whisper-helper.py"), str(path), "--slot", slot,
-                           "--start", str(start_ms / 1000), "--end", str(end_ms / 1000), "--output", str(result)])
+                           "--start", str(start_ms / 1000), "--end", str(end_ms / 1000), "--output", str(result), "--spelling-hint=" + hint[:160]])
                 self._episode(token)
                 return json.loads(result.read_text(encoding="utf-8"))
         finally:

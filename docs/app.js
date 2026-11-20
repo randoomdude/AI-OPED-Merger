@@ -146,6 +146,7 @@ function trackChanged() {
 }
 
 function showSlot() {
+    $("whisper-hint").value = "";
     $("whisper-review").replaceChildren();
     $("reuse-review").replaceChildren();
     $("reuse-file").value = "";
@@ -199,7 +200,7 @@ if (nativeView) {
             $("intro").textContent = "Time opening and ending lyrics and save a new MKV with the merged subtitle track.";
             $("filename").textContent = "Choose an episode from this PC.";
             $("helper-instructions").hidden = true;
-            $("run-whisper").hidden = $("export-mkv").hidden = false;
+            $("hint-label").hidden = $("run-whisper").hidden = $("export-mkv").hidden = false;
             $("jimaku-whisper").textContent = "Use Whisper on this song";
         } else if (pendingJobs.has(data?.id)) {
             const job = pendingJobs.get(data.id);
@@ -1063,7 +1064,7 @@ $("run-whisper").onclick = async () => {
     progress.textContent = "Listening to the " + slot + " from " + clock(start) + " to " + clock(end)
         + " on this PC. The first run can take several minutes.";
     try {
-        await applyWhisper(() => desktopJob("time_song", episode.desktopId, slot, start, end));
+        await applyWhisper(() => desktopJob("time_song", episode.desktopId, slot, start, end, $("whisper-hint").value.trim()));
     } finally {
         progress.hidden = true;
         button.disabled = $("jimaku-whisper").disabled = $("export-mkv").disabled = false;
@@ -1097,10 +1098,46 @@ async function applyWhisper(read) {
         review.replaceChildren(text("p", reference.length
             ? matched + " of " + reference.filter(row => row.include).length + " selected lines matched. Review the proposed times."
             : "Whisper found " + matched + " transcript lines. Choose whether to use them as lyrics."));
-        const changes = reference.flatMap((row, i) => rows[i] !== row ? [{ before: row, after: rows[i] }] : []);
-        for (const {before, after} of changes) {
-            review.append(text("p", before.text + " · " + (before.start || "untimed") + " – " + (before.end || "untimed")
-                + " → " + after.start + " – " + after.end));
+        const changes = reference.flatMap((row, i) => rows[i] !== row ? [{ index: i, before: row, after: rows[i] }] : []);
+        const accepted = new Set();
+        for (const {index, before, after} of changes) {
+            accepted.add(index);
+            const label = text("label", before.text + " · " + (before.start || "untimed") + " – " + (before.end || "untimed")
+                + " → " + after.start + " – " + after.end, "inline");
+            const check = document.createElement("input");
+            check.type = "checkbox";
+            check.checked = true;
+            check.onchange = () => check.checked ? accepted.add(index) : accepted.delete(index);
+            label.prepend(check);
+            const jump = text("button", "Hear proposed time");
+            jump.onclick = () => seek(timestamp(after.start));
+            const item = document.createElement("div");
+            item.append(label, jump);
+            review.append(item);
+        }
+        const omitted = new Set();
+        const uncertain = reference.map((row, index) => ({row, index}))
+            .filter(({row, index}) => row.include && rows[index] === row);
+        if (uncertain.length) {
+            const panel = document.createElement("details");
+            panel.append(text("summary", "Review " + uncertain.length + " lines Whisper could not place"));
+            panel.append(text("p", "These lines keep their current timing. Check Exclude only for a line you recognize as absent from the TV edit."));
+            for (const {row, index} of uncertain) {
+                const item = document.createElement("div");
+                const label = text("label", "Exclude line " + (index + 1) + " · " + row.text, "inline");
+                const input = document.createElement("input");
+                input.type = "checkbox";
+                input.onchange = () => input.checked ? omitted.add(index) : omitted.delete(index);
+                label.prepend(input);
+                item.append(label);
+                if (Number.isFinite(timestamp(row.start))) {
+                    const jump = text("button", "Go to draft time " + row.start);
+                    jump.onclick = () => seek(timestamp(row.start));
+                    item.append(jump);
+                }
+                panel.append(item);
+            }
+            review.append(panel);
         }
         function offer(label, action) {
             const button = text("button", label);
@@ -1131,7 +1168,8 @@ async function applyWhisper(read) {
             const delta = Math.round((offsets[mid] + offsets[Math.floor((offsets.length-1)/2)]) / 20) * 10;
             offer("Shift all lines by " + (delta / 1000) + " s", () => apply(shiftRows(reference, delta, opened.duration)));
         }
-        if (changes.length) offer("Apply matched line times only", () => apply(rows));
+        if (reference.length) offer("Apply reviewed timing and exclusions", () =>
+            apply(rows.map((row, index) => omitted.has(index) ? {...row, include: false} : accepted.has(index) ? row : reference[index])));
         offer(reference.length ? "Replace lyrics with Whisper transcription…" : "Use Whisper transcription", () =>
             apply(whisperDraft(data, []).rows, true));
         status("Whisper comparison ready. Your draft is unchanged.");

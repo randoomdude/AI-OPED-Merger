@@ -59,7 +59,7 @@ def inspect(ffmpeg, path):
     return stream, chapters, timestamp(duration[1]) if duration else float("inf")
 
 
-def transcribe(ffmpeg, episode, stream, start, end, model_name):
+def transcribe(ffmpeg, episode, stream, start, end, model_name, hint=""):
     try:
         import numpy as np
         import torch
@@ -77,7 +77,7 @@ def transcribe(ffmpeg, episode, stream, start, end, model_name):
     print(f"Transcribing {len(audio) / 16000:.1f} seconds with Whisper {model_name} on {device.upper()}…", flush=True)
     model = whisper.load_model(model_name, device=device)
     result = model.transcribe(audio, language="ja", task="transcribe", word_timestamps=True,
-                              condition_on_previous_text=False, temperature=0, fp16=device == "cuda")
+                              initial_prompt=hint.strip()[:160] or None, condition_on_previous_text=False, temperature=0, fp16=device == "cuda")
     clip_start = round(start * 1000)
     clip_end = min(round(end * 1000), clip_start + round(len(audio) / 16))
 
@@ -135,6 +135,7 @@ def main():
     parser.add_argument("--start", type=timestamp)
     parser.add_argument("--end", type=timestamp)
     parser.add_argument("--model", default="medium", help="A multilingual Whisper model name (default: medium)")
+    parser.add_argument("--spelling-hint", default="", help="Optional short vocabulary hint for the audio")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     interactive = args.mkv is None
@@ -167,7 +168,7 @@ def main():
         output = args.output or episode.with_name(episode.stem + f".{slot.lower()}.whisper.json")
         if output.exists():
             raise ValueError(f"{output.name} already exists. Pick another output path or move the previous timing file.")
-        begin, finish, segments = transcribe(ffmpeg, episode, stream, start, end, args.model)
+        begin, finish, segments = transcribe(ffmpeg, episode, stream, start, end, args.model, args.spelling_hint)
         if episode.stat().st_size != size:
             raise ValueError("The episode changed while it was being processed. Try the finished file.")
         write_result(output, {"format": "ai-oped-whisper", "version": 1, "mkv": episode.name, "mkv_size": size,
