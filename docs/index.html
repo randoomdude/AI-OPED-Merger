@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https://lrclib.net; media-src blob:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+  <title>AI OP/ED Merger</title>
+  <link rel="stylesheet" href="./style.css">
+  <script src="./vendor/fflate.min.js" defer></script>
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+<main>
+  <header class="masthead">
+    <h1>AI OP/ED Merger</h1>
+    <p>Time opening and ending lyrics against a local episode and export one ASS subtitle file.</p>
+  </header>
+  <p id="status" class="status" role="status" aria-live="polite"></p>
+  <section class="panel">
+    <h2>Episode</h2>
+    <label for="episode">Downloaded MKV</label>
+    <input id="episode" type="file" accept=".mkv,video/x-matroska">
+    <p id="filename" class="muted">Your browser reads the episode from your device.</p>
+    <progress id="progress" max="100" value="0" hidden></progress>
+    <div id="track-options" hidden>
+      <label for="track">Original subtitle track</label>
+      <select id="track"></select>
+      <p id="track-summary" class="muted"></p>
+    </div>
+  </section>
+  <div id="project" hidden>
+    <section class="panel">
+      <div class="heading-row">
+        <div><h2>Song and episode window</h2><p id="chapter-note" class="muted"></p></div>
+        <label>Song<select id="slot"><option value="OP">Opening</option><option value="ED">Ending</option></select></label>
+      </div>
+      <div class="grid">
+        <label>Episode start<input id="window-start" placeholder="0:01:09.00"></label>
+        <label>Episode end<input id="window-end" placeholder="0:02:39.00"></label>
+      </div>
+      <video id="player" controls preload="metadata" playsinline></video>
+      <div class="row player-controls">
+        <button id="jump" type="button">Go to song start</button>
+        <button id="back" type="button">Back 2 seconds</button>
+        <button id="forward" type="button">Forward 2 seconds</button>
+        <output id="playhead">0:00:00.00</output>
+      </div>
+      <p id="playback-note" class="muted"></p>
+      <details>
+        <summary>Use a different preview file</summary>
+        <p class="muted">Choose an audio or video copy with the same episode start and duration.</p>
+        <input id="preview" type="file" accept="video/*,audio/*,.mkv,.m4a,.wav" aria-label="Same episode preview file">
+      </details>
+    </section>
+    <section class="panel">
+      <h2>Source lyrics</h2>
+      <p id="song-title" class="muted"></p>
+      <div class="row">
+        <label class="fill">Song title or artist<input id="query" type="search"></label>
+        <button id="search" type="button">Search LRCLIB</button>
+      </div>
+      <p id="search-status" role="status" class="muted"></p>
+      <div id="results"></div>
+      <details>
+        <summary>Paste lyrics or LRC</summary>
+        <div class="grid">
+          <label>Source URL<input id="source-url" type="url" placeholder="https://…"></label>
+          <a id="uta-net" target="_blank" rel="noopener noreferrer" hidden>Open Uta-Net lyrics</a>
+        </div>
+        <label>Original lyrics or LRC<textarea id="paste" rows="6"></textarea></label>
+        <button id="use-paste" type="button">Use pasted lyrics</button>
+      </details>
+      <p id="source-status" class="muted" role="status"></p>
+    </section>
+    <section id="timing" class="panel" hidden>
+      <h2>Line timing</h2>
+      <div id="anchors" hidden>
+        <p class="muted">Listen for the first lyric in the episode, then match it to its line in the source. A second match can correct steady drift.</p>
+        <div class="grid">
+          <label>First line heard<select id="first"></select></label>
+          <label>Last line heard<select id="last"></select></label>
+          <label>First line in episode<input id="first-episode" placeholder="0:01:12.50"></label>
+          <div><button type="button" data-capture="first-episode">Use playhead for first line</button></div>
+          <label>Second anchor line<select id="second"></select></label>
+          <label>Second line in episode<input id="second-episode" placeholder="0:02:01.40"></label>
+          <div><button type="button" data-capture="second-episode">Use playhead for second line</button></div>
+        </div>
+      </div>
+      <p id="plain-hint" class="muted" hidden>Mark each line’s start and end while listening, or enter them by hand.</p>
+      <button id="draft" type="button">Build timing draft</button>
+      <div id="cue-list"></div>
+    </section>
+    <section class="panel">
+      <h2>Export</h2>
+      <p id="export-summary" class="muted"></p>
+      <div class="row export-actions">
+        <button id="export-ass" class="primary" type="button">Download merged ASS</button>
+        <button id="export-zip" type="button">Download project ZIP</button>
+      </div>
+      <details>
+        <summary>Reopen a saved project</summary>
+        <label>Project ZIP for this episode<input id="restore" type="file" accept=".zip,application/zip"></label>
+      </details>
+    </section>
+  </div>
+</main>
+</body>
+</html>

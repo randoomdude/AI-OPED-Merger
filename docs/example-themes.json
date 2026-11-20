@@ -1,0 +1,26 @@
+{
+  "aliases": ["FX Senshi Kurumi-chan", "FX Fighter Kurumi-chan"],
+  "metadata_source": "https://fxkurumi-info.com/music/",
+  "songs": [
+    {
+      "slot": "OP",
+      "title": "FX戦士くるみちゃん",
+      "search_query": "FX戦士くるみちゃん",
+      "artist": "福賀くるみ（CV：鈴木愛奈）",
+      "sources": {
+        "uta_net": "https://www.uta-net.com/song/400331/",
+        "lrclib_id": 38950555
+      }
+    },
+    {
+      "slot": "ED",
+      "title": "＄・￥・€",
+      "search_query": "FX戦士くるみちゃん",
+      "artist": "福賀くるみ（CV：鈴木愛奈）",
+      "sources": {
+        "uta_net": "https://www.uta-net.com/song/400330/",
+        "lrclib_id": 38950557
+      }
+    }
+  ]
+}
