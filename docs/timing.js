@@ -1,4 +1,4 @@
-import { assLyric } from "./furigana.js";
+import { assLyric, positionedLyrics } from "./furigana.js";
 
 export function timestamp(value) {
     const text = String(value ?? "").trim();
@@ -171,15 +171,29 @@ export function mergedAss(original, cues, furigana = "above") {
     if (events < 0 || !original.includes("[V4+ Styles]")) throw Error("ASS script has no standard style and event sections.");
     let style = "OPED_Lyrics";
     while (original.includes("Style: " + style + ",")) style += "_";
-    const height = Number(original.match(/^PlayResY:\s*(\d+)/im)?.[1] || 360);
+    const scriptX = Number(original.match(/^PlayResX:\s*(\d+)/im)?.[1]);
+    const scriptY = Number(original.match(/^PlayResY:\s*(\d+)/im)?.[1]);
+    const height = scriptY || (scriptX === 1280 ? 1024 : scriptX ? Math.round(scriptX * 3 / 4) : 288);
+    const width = scriptX || (height === 1024 ? 1280 : Math.round(height * 4 / 3));
     const size = Math.max(16, Math.round(height * .063));
     const margin = Math.round(height * .04);
     const definition = "Style: " + style + ",Arial," + size
         + ",&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,8,12,12," + margin + ",1";
     const withStyle = original.slice(0, events).trimEnd() + "\n" + definition + "\n\n" + original.slice(events);
-    // Lyrics are plain text. Full-width braces and slashes cannot become ASS overrides.
-    return withStyle.trimEnd() + "\n" + cues.map(cue => {
-        const text = assLyric(cue.text, furigana, size);
-        return "Dialogue: " + [0, clock(cue.start), clock(cue.end), style, cue.slot, 0, 0, 0, "", text].join(",");
-    }).join("\n") + "\n";
+    let active = [];
+    const dialogue = [];
+    for (const cue of cues) {
+        active = active.filter(item => item.end > cue.start);
+        const top = Math.max(margin, ...active.map(item => item.bottom));
+        const ruby = furigana === "above" && /《|<ruby\b/i.test(cue.text);
+        const layout = furigana === "above" && (ruby || active.some(item => item.positioned))
+            ? positionedLyrics(cue.text, width, size, margin, top) : null;
+        const lines = layout?.events ?? [assLyric(cue.text, furigana)];
+        for (const line of lines) {
+            dialogue.push("Dialogue: " + [0, clock(cue.start), clock(cue.end), style, cue.slot, 0, 0, 0, "", line].join(","));
+        }
+        active.push({ end: cue.end, bottom: layout?.bottom ?? top + size * cue.text.split(/\r?\n/).length + 3,
+            positioned: Boolean(layout) });
+    }
+    return withStyle.trimEnd() + "\n" + dialogue.join("\n") + "\n";
 }

@@ -24,32 +24,97 @@ export function rubyMarkup(input) {
     return walk(template.content).trim();
 }
 
-export function lyricForms(input) {
+function lyricRuns(input) {
     const value = rubyMarkup(input);
     const pattern = /(?:[｜|]([^｜|《》\r\n]+)|([\p{Script=Han}々〆ヶ]+))《([^《》\r\n]+)》/gu;
-    let base = "", reading = "", inline = "", offset = 0;
+    const runs = [];
+    let offset = 0;
     for (const match of value.matchAll(pattern)) {
-        const prefix = value.slice(offset, match.index);
-        const word = match[1] ?? match[2];
-        base += prefix + word;
-        reading += prefix + match[3];
-        inline += prefix + word + "（" + match[3] + "）";
+        if (match.index > offset) runs.push({ base: value.slice(offset, match.index) });
+        runs.push({ base: match[1] ?? match[2], ruby: match[3] });
         offset = match.index + match[0].length;
     }
-    const tail = value.slice(offset);
-    return { base: base + tail, reading: reading + tail, inline: inline + tail, annotated: offset > 0 };
+    if (offset < value.length) runs.push({ base: value.slice(offset) });
+    return runs;
+}
+
+export function lyricForms(input) {
+    const runs = lyricRuns(input);
+    return {
+        base: runs.map(run => run.base).join(""),
+        inline: runs.map(run => run.ruby ? run.base + "（" + run.ruby + "）" : run.base).join(""),
+    };
 }
 
 function safeText(s) {
     return s.replace(/\\/g, "＼").replace(/\{/g, "｛").replace(/\}/g, "｝").replace(/\r?\n/g, "\\N");
 }
 
-export function assLyric(input, mode, size) {
-    return input.split(/\r?\n/).map(line => {
-        const forms = lyricForms(line);
-        if (!forms.annotated || mode === "base") return safeText(forms.base);
-        if (mode === "inline") return safeText(forms.inline);
-        return "{\\fs" + Math.round(size * 0.62) + "}" + safeText(forms.reading)
-            + "\\N{\\fs" + size + "}" + safeText(forms.base);
-    }).join("\\N");
+export function assLyric(input, mode) {
+    const forms = lyricForms(input);
+    return safeText(mode === "inline" ? forms.inline : forms.base);
+}
+
+// Measure at one large size and convert the font's complete line height to ASS script units.
+const rubyFont = "Meiryo";
+let context;
+function emWidth(text) {
+    context ??= document.createElement("canvas").getContext("2d");
+    context.font = "200px " + rubyFont + ", sans-serif";
+    const metric = context.measureText(text);
+    const height = metric.fontBoundingBoxAscent + metric.fontBoundingBoxDescent;
+    return metric.width / (height || 200);
+}
+
+function wrapRuns(runs, size, small, limit) {
+    const rows = [];
+    let row = { cells: [], width: 0 };
+    function append(base, ruby) {
+        const width = Math.max(emWidth(base) * size, ruby ? emWidth(ruby) * small : 0);
+        if (row.width && row.width + width > limit) {
+            rows.push(row);
+            row = { cells: [], width: 0 };
+        }
+        const scale = width > limit ? limit / width : 1;
+        row.cells.push({ base, ruby, width: width * scale, scale });
+        row.width += width * scale;
+    }
+    for (const { base, ruby } of runs) {
+        if (ruby || emWidth(base) * size <= limit) append(base, ruby);
+        else {
+            for (const part of base.match(/[A-Za-z0-9']+|\s+|./gu) || []) append(part);
+        }
+    }
+    rows.push(row);
+    return rows;
+}
+
+// Each <rt> and its own base share a horizontal center. Plain runs have no reading event.
+export function positionedLyrics(input, width, size, margin, top) {
+    const small = Math.max(8, Math.round(size * 0.55));
+    const events = [];
+    let y = top;
+    for (const line of input.split(/\r?\n/)) {
+        const rows = wrapRuns(lyricRuns(line), size, small, Math.max(1, width - 2 * margin));
+        for (const row of rows) {
+            const hasRuby = row.cells.some(cell => cell.ruby);
+            const baseY = y + (hasRuby ? small + Math.max(1, size * 0.06) : 0);
+            let left = (width - row.width) / 2;
+            for (const cell of row.cells) {
+                const x = (left + cell.width / 2).toFixed(2);
+                const scale = cell.scale < 1 ? "\\fscx" + (cell.scale * 100).toFixed(2) : "";
+                function place(value, at, fontSize, outline) {
+                    if (!value.trim()) return;
+                    const txt = safeText(value).replace(/^ +| +$/g, spaces => "\\h".repeat(spaces.length));
+                    events.push("{\\an8\\q2\\pos(" + x + "," + at.toFixed(2) + ")\\fn" + rubyFont
+                        + "\\fs" + fontSize + scale + outline + "}" + txt);
+                }
+                place(cell.base, baseY, size, "");
+                if (cell.ruby) place(cell.ruby, y, small, "\\bord" + Math.max(0.7, size / 24).toFixed(2));
+                left += cell.width;
+            }
+            y = baseY + size + Math.max(2, size * 0.1);
+        }
+    }
+    return { events, bottom: y };
 }

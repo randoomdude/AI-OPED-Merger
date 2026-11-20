@@ -36,7 +36,7 @@ Under **Jimaku episode subtitles**, check the anime title and episode number det
 
 In **Paste lyrics or LRC**, type \`剣《つるぎ》を持《も》つ\` or paste HTML ruby such as \`<ruby>剣<rt>つるぎ</rt></ruby>\`. Use \`｜\` before a word to mark its exact beginning. Readings can also be edited in the line timing list. For audio matching, Whisper uses the underlying lyric text.
 
-Under **Export**, choose a small reading line above the whole lyric, inline parentheses, or lyrics without readings. The same setting applies to standalone ASS, the MKV subtitle track, and the merged ASS inside a project ZIP. The ZIP retains the annotations for later editing.
+Under **Export**, choose furigana centered above each annotated word, inline parentheses, or lyrics without readings. The same setting applies to standalone ASS, the MKV subtitle track, and the merged ASS inside a project ZIP. The ZIP retains the annotations for later editing.
 
 ## Timing from episode audio
 
