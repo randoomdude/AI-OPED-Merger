@@ -8,12 +8,14 @@ The release lives under `docs/`. Serve that folder over HTTP for local developme
 
 1. Choose a downloaded MKV and select its full subtitle track.
 2. Choose Opening or Ending. The app uses the matching MKV chapter start when available. Enter a start if the chapter is missing. The draft ends 1:34 later, or earlier if the chapter or episode ends sooner. You can enter a different end time.
-3. Search LRCLIB and import the matching recording, or use the Uta-Net and UtaTen links and paste lyrics with their source URL. The app uses the theme catalog to look up songs by title and artist. For other anime, it uses AniList to find English, Japanese, and romanized titles when it can identify the show.
+3. Search LRCLIB and import the matching recording, or use the Uta-Net and UtaTen links and paste lyrics with their source URL. Add English, Japanese, or romaji spellings under **Alternate search titles** to search them separately. The app uses the theme catalog for known songs and AniList to look up title variants for other anime.
 4. For a timed recording, build a draft to place the source timestamps relative to the episode start. To adjust the timing, choose the first line heard and match it to the playhead. You can also trim the line range or match a later line to correct steady drift. Listen through the draft before exporting.
 5. For plain lyrics, build a draft at three seconds per line from the song start. If the song start is blank, a new draft starts at the beginning of the episode. Estimates shorten to fit the available window. Use **Fill missing times** to keep entered timestamps and complete a partial draft. ASS export also fills blank fields in plain lyrics drafts.
 6. Download the merged ASS, or export a project ZIP with the original and merged subtitles, the fonts, and a JSON record of the lyrics and timing choices.
 
 To continue editing later, choose the same MKV and open the project ZIP under **Export**.
+
+Under **Jimaku episode subtitles**, check the anime title and episode number detected from the MKV. **Browse on Jimaku** works without a key. For results within the app, enter a key from your [Jimaku account](https://jimaku.cc/account) and use **Search Jimaku**. Jimaku returns episode subtitle files whose song coverage varies by upload. The key stays in this tab and goes only to Jimaku.
 
 ## Timing from episode audio
 

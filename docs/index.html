@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https://lrclib.net https://graphql.anilist.co; media-src blob:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https://lrclib.net https://graphql.anilist.co https://jimaku.cc; media-src blob:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
   <title>AI OP/ED Merger</title>
   <link rel="stylesheet" href="./style.css">
   <script src="./vendor/fflate.min.js" defer></script>
@@ -60,12 +60,31 @@
         <label class="fill">Song, artist, or anime title<input id="query" type="search"></label>
         <button id="search" type="button">Search LRCLIB</button>
       </div>
+      <details id="alternate-titles">
+        <summary>Alternate search titles</summary>
+        <label>English, Japanese, or romaji, one per line<textarea id="alternates" rows="3"></textarea></label>
+      </details>
       <p id="search-status" role="status" class="muted"></p>
       <div id="results"></div>
       <p class="muted">Other lyrics sources ·
         <a id="uta-net" href="https://www.uta-net.com/" target="_blank" rel="noopener noreferrer">Uta-Net</a> ·
         <a id="uta-ten" href="https://utaten.com/search" target="_blank" rel="noopener noreferrer">UtaTen</a>
       </p>
+      <details>
+        <summary>Jimaku episode subtitles</summary>
+        <div class="grid">
+          <label>Anime title<input id="jimaku-title" type="search"></label>
+          <label>Episode number<input id="jimaku-episode" type="number" min="0" step="1" placeholder="All episodes"></label>
+          <label>Jimaku API key<input id="jimaku-key" type="password" autocomplete="off" spellcheck="false"></label>
+          <p class="muted">An API key lists files here. You can also browse Jimaku directly. <a href="https://jimaku.cc/account" target="_blank" rel="noopener noreferrer">Jimaku account</a></p>
+        </div>
+        <div class="row">
+          <button id="jimaku-search" type="button">Search Jimaku</button>
+          <a id="jimaku-public" href="https://jimaku.cc/" target="_blank" rel="noopener noreferrer">Browse on Jimaku</a>
+        </div>
+        <p id="jimaku-status" role="status" class="muted"></p>
+        <div id="jimaku-results"></div>
+      </details>
       <details id="paste-lyrics">
         <summary>Paste lyrics or LRC</summary>
         <label>Source URL<input id="source-url" type="url" placeholder="https://…"></label>

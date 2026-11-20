@@ -17,6 +17,7 @@ let previewUrl;
 let slot = "OP";
 let slots;
 let sourceRequest;
+let jimakuRequest;
 let retryAt = 0;
 
 function status(message, error = false) {
@@ -77,13 +78,12 @@ function showForSearch(state, query) {
 
 function stateFor(name) {
     const chapter = chapterFor(name);
-    const filename = episode.file.name.replace(/^(?:\[[^\]]+\]\s*)+/, "");
-    const anime = filename.match(/^(.+?)\s+-\s+\d+/)?.[1] || filename.replace(/\.mkv$/i, "");
+    const { anime } = episode;
     const show = catalogShow(anime);
     const song = show?.songs.find(item => item.slot === name) || null;
     return {
         chapter, anime, song, windowStart: clock(chapter?.start), windowEnd: "",
-        query: song?.search_query || song?.title || anime, source: null, lines: [], rows: [],
+        query: song?.search_query || song?.title || anime, alternates: "", source: null, lines: [], rows: [],
         first: 0, last: 0, second: null, firstEpisode: "", secondEpisode: "",
         secondMode: "drift", beforeCutEnd: "",
     };
@@ -126,6 +126,9 @@ function showSlot() {
         ? "Song start from the MKV chapter named " + state.chapter.title + "."
         : "Enter the song’s start in the episode.";
     $("query").value = state.query;
+    $("alternates").value = state.alternates;
+    $("alternates").placeholder = catalogShow(state.anime)?.aliases.join("\n") || "One alternate title per line";
+    $("alternate-titles").open = Boolean(state.alternates);
     $("source-url").value = state.source?.url || state.song?.sources.uta_net || "";
     $("paste").value = "";
     showSourceLinks();
@@ -159,6 +162,7 @@ function showSourceLinks() {
 function loadEpisode(file) {
     worker?.terminate();
     sourceRequest?.abort();
+    jimakuRequest?.abort();
     episode = null;
     $("project").hidden = true;
     $("track-options").hidden = true;
@@ -180,7 +184,15 @@ function loadEpisode(file) {
             $("progress").value = data.progress;
             return;
         }
-        episode = { ...data, file };
+        const filename = file.name.replace(/^(?:\[[^\]]+\]\s*)+/, "").replace(/\.mkv$/i, "");
+        const match = filename.match(/^(.+?)(?:\s+-\s+(\d+(?:\.\d+)?)(?:v\d+)?(?=\s|\[|\(|$)|[ ._-]+S\d+E(\d+)\b)/i);
+        const number = Number(match?.[2] ?? match?.[3]);
+        episode = { ...data, file, anime: match?.[1] || filename };
+        $("jimaku-title").value = episode.anime;
+        $("jimaku-episode").value = Number.isInteger(number) ? String(number) : "";
+        $("jimaku-status").textContent = "";
+        $("jimaku-results").replaceChildren();
+        showJimakuLink();
         active.terminate();
         $("progress").hidden = true;
         slots = { OP: stateFor("OP"), ED: stateFor("ED") };
@@ -237,7 +249,7 @@ function seek(ms) {
 $("jump").onclick = () => seek(timestamp($("window-start").value));
 $("back").onclick = () => seek(player.currentTime * 1000 - 2000);
 $("forward").onclick = () => seek(player.currentTime * 1000 + 2000);
-for (const [id, key] of [["query", "query"], ["window-start", "windowStart"], ["window-end", "windowEnd"],
+for (const [id, key] of [["query", "query"], ["alternates", "alternates"], ["window-start", "windowStart"], ["window-end", "windowEnd"],
     ["first-episode", "firstEpisode"], ["second-episode", "secondEpisode"], ["before-cut-end", "beforeCutEnd"]]) {
     $(id).addEventListener("input", event => { slots[slot][key] = event.target.value; });
 }
@@ -346,6 +358,131 @@ function animeQueries(titles) {
     return [...new Set(titles.map(titleWithoutYear))].map(q => ({ q }));
 }
 
+function uniqueTitles(titles) {
+    const unique = new Map();
+    for (const term of titles) {
+        const title = term.trim();
+        const key = title.normalize("NFKC").toLowerCase();
+        if (key && !unique.has(key)) unique.set(key, title);
+    }
+    return [...unique.values()];
+}
+
+function alternateTitles(state) {
+    return uniqueTitles(state.alternates.split(/\r?\n/));
+}
+
+function showJimakuLink() {
+    const title = $("jimaku-title").value.trim();
+    const id = catalogShow(title)?.jimaku_id;
+    $("jimaku-public").href = id ? "https://jimaku.cc/entry/" + id : title
+        ? "https://jimaku.cc/opensearch/redirect?" + new URLSearchParams({ anime: true, query: title })
+        : "https://jimaku.cc/";
+}
+
+for (const id of ["jimaku-title", "jimaku-episode"]) {
+    $(id).addEventListener("input", () => {
+        jimakuRequest?.abort();
+        $("jimaku-status").textContent = "";
+        $("jimaku-results").replaceChildren();
+        showJimakuLink();
+    });
+}
+
+async function jimaku(path, key, signal) {
+    signal.throwIfAborted();
+    const timeout = AbortSignal.timeout(15000);
+    let response;
+    try {
+        response = await fetch("https://jimaku.cc/api" + path, {
+            headers: { Authorization: key }, credentials: "omit", redirect: "error",
+            signal: AbortSignal.any([signal, timeout]),
+        });
+    } catch {
+        signal.throwIfAborted();
+        throw Error(timeout.aborted ? "Jimaku took too long to respond." : "Could not reach Jimaku. Try Browse on Jimaku.");
+    }
+    if (response.status === 401 || response.status === 403) throw Error("Jimaku rejected the API key. Check it in your Jimaku account.");
+    if (response.status === 429) throw Error("Jimaku is limiting requests. Wait and try again.");
+    if (!response.ok) throw Error("Jimaku returned HTTP " + response.status + ".");
+    const data = await response.json();
+    if (!Array.isArray(data)) throw Error("Jimaku returned an unexpected response.");
+    return data;
+}
+
+async function listJimakuFiles(id, number, key, signal) {
+    $("jimaku-status").textContent = "Looking for subtitle files…";
+    $("jimaku-results").replaceChildren();
+    const query = number === "" ? "" : "?" + new URLSearchParams({ episode: number });
+    const files = await jimaku("/entries/" + id + "/files" + query, key, signal);
+    if (signal.aborted) return;
+    $("jimaku-public").href = "https://jimaku.cc/entry/" + id;
+    let count = 0;
+    for (const file of files) {
+        if (typeof file?.name !== "string" || typeof file.url !== "string") continue;
+        const url = URL.parse(file.url, "https://jimaku.cc");
+        if (!url || url.origin !== "https://jimaku.cc" || !url.pathname.startsWith("/entry/" + id + "/download/")) continue;
+        const row = text("div", "", "result");
+        const link = text("a", file.name);
+        link.href = url.href;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        row.append(link);
+        $("jimaku-results").append(row);
+        count++;
+    }
+    $("jimaku-status").textContent = count ? count + (count === 1 ? " subtitle file found. " : " subtitle files found. ")
+        + "Check the file for opening or ending lyrics."
+        : number ? "Jimaku returned no files for episode " + number + ". Browse the entry for other releases."
+            : "Jimaku returned no subtitle files for this title.";
+}
+
+async function runJimakuSearch(entryId) {
+    jimakuRequest?.abort();
+    jimakuRequest = new AbortController();
+    const { signal } = jimakuRequest;
+    const title = $("jimaku-title").value.trim();
+    const number = $("jimaku-episode").value.trim();
+    const key = $("jimaku-key").value.trim();
+    const knownId = catalogShow(title)?.jimaku_id;
+    $("jimaku-results").replaceChildren();
+    if (!title) return $("jimaku-status").textContent = "Enter an anime title.";
+    if (!key) return $("jimaku-status").textContent = "Use Browse on Jimaku, or enter a Jimaku API key to list files here.";
+    if (number && (!/^\d+$/.test(number) || Number(number) > 2147483647)) {
+        return $("jimaku-status").textContent = "Enter a whole episode number or leave it blank to list all episodes.";
+    }
+    try {
+        if (entryId || knownId) return await listJimakuFiles(entryId || knownId, number, key, signal);
+        $("jimaku-status").textContent = "Searching Jimaku…";
+        const entries = new Map();
+        for (const query of uniqueTitles([title, ...alternateTitles(slots[slot])])) {
+            const hits = await jimaku("/entries/search?" + new URLSearchParams({ anime: true, query }), key, signal);
+            for (const entry of hits) {
+                if (Number.isSafeInteger(entry?.id) && entry.id > 0 && typeof entry.name === "string") entries.set(entry.id, entry);
+            }
+        }
+        if (signal.aborted) return;
+        if (entries.size === 1) return await listJimakuFiles(entries.keys().next().value, number, key, signal);
+        $("jimaku-status").textContent = entries.size ? "Choose an anime entry to view its episode files." : "Jimaku found no matching anime entries.";
+        for (const entry of entries.values()) {
+            const row = text("div", "", "result");
+            const label = document.createElement("div");
+            label.append(text("strong", entry.name));
+            const names = uniqueTitles([entry.name, entry.english_name || "", entry.japanese_name || ""]);
+            if (names.length > 1) label.append(text("span", names.slice(1).join(" · ")));
+            const button = text("button", "List files");
+            button.type = "button";
+            button.onclick = () => runJimakuSearch(entry.id);
+            row.append(label, button);
+            $("jimaku-results").append(row);
+        }
+    } catch (error) {
+        if (!signal.aborted) $("jimaku-status").textContent = error.message;
+    }
+}
+
+$("jimaku-search").onclick = () => runJimakuSearch();
+
 function setSource(source) {
     const state = slots[slot];
     if (state.rows.length && !window.confirm("Replace the lyrics and timing draft for this song?")) return false;
@@ -365,8 +502,9 @@ function setSource(source) {
 
 $("search").onclick = async () => {
     const query = $("query").value.trim();
-    if (!query) return status("Enter a song, artist, or anime title.", true);
     const searching = slots[slot];
+    const alternates = alternateTitles(searching);
+    if (!query && !alternates.length) return status("Enter a song, artist, or anime title.", true);
     const show = showForSearch(searching, query);
     const song = show?.songs.find(item => item.slot === slot);
     const signal = beginSourceRequest();
@@ -376,7 +514,7 @@ $("search").onclick = async () => {
         let rows;
         if (song?.lrclib_search) {
             const variants = [song.lrclib_search, ...(song.lrclib_alternates ?? [])];
-            rows = await searchLyrics(variants, signal);
+            rows = await searchLyrics([...variants, ...alternates.filter(q => q !== query).map(q => ({ q }))], signal);
             if (!rows.length && song.lrclib_alternates?.length) {
                 const songTitles = [...new Set(variants.map(entry => entry.track_name))];
                 const artists = variants.map(entry => titleKey(entry.artist_name));
@@ -385,8 +523,9 @@ $("search").onclick = async () => {
                     songTitles.some(title => titleKey(record.trackName).startsWith(titleKey(title))) && artists.includes(titleKey(record.artistName)));
             }
         } else {
-            const titles = show?.aliases ?? await animeTitles(query, signal);
-            rows = await searchLyrics([{ q: song?.search_query || query }, ...animeQueries(titles)], signal);
+            const titles = show?.aliases ?? (query ? await animeTitles(query, signal) : []);
+            const queries = uniqueTitles([song?.search_query || query, ...alternates, ...titles.map(titleWithoutYear)]);
+            rows = await searchLyrics(queries.map(q => ({ q })), signal);
         }
         if (signal.aborted || slots[slot] !== searching) return;
         rows.sort((a, b) => Number(b.id === song?.sources.lrclib_id) - Number(a.id === song?.sources.lrclib_id));
@@ -687,7 +826,7 @@ $("restore").onchange = async event => {
                 throw Error("The ZIP does not contain a valid timing draft.");
             }
             const base = stateFor(name);
-            for (const key of ["query", "windowStart", "windowEnd", "firstEpisode", "secondEpisode", "beforeCutEnd"]) {
+            for (const key of ["query", "alternates", "windowStart", "windowEnd", "firstEpisode", "secondEpisode", "beforeCutEnd"]) {
                 if (typeof song[key] === "string") base[key] = song[key];
             }
             if (song.secondMode === "shift") base.secondMode = "shift";

@@ -33,6 +33,7 @@
     "まったく最近の探偵ときたら"
   ],
   "metadata_source": "https://mattan-anime.com/music/",
+  "jimaku_id": 9826,
   "songs": [
     {
       "slot": "OP",
@@ -67,6 +68,7 @@
     "Majikku Naito Reiasu (2026)"
   ],
   "metadata_source": "https://rayearth-anime.com/music/",
+  "jimaku_id": 12719,
   "songs": [
     {
       "slot": "OP",
@@ -94,6 +96,30 @@
         "uta_net": "https://www.uta-net.com/song/400881/",
         "uta_ten": "https://utaten.com/lyric/sz26101631/"
       }
+    }
+  ]
+},
+{
+  "aliases": ["Tempal - Item no Chikara", "Tempal: Item no Chikara", "Overgeared", "テムパル～アイテムの力～"],
+  "metadata_source": "https://tempal-anime.net/music/",
+  "jimaku_id": 12658,
+  "songs": [
+    {
+      "slot": "OP",
+      "title": "SATISFY",
+      "artist": "Re:name",
+      "search_query": "SATISFY Re:name",
+      "lrclib_search": { "track_name": "SATISFY", "artist_name": "Re:name" },
+      "sources": { "uta_net": "https://www.uta-net.com/song/400356/", "uta_ten": "https://utaten.com/lyric/mi26091846/" }
+    },
+    {
+      "slot": "ED",
+      "title": "Ray of Emotion",
+      "artist": "導凰 (TAO)",
+      "search_query": "Ray of Emotion 導凰",
+      "lrclib_search": { "track_name": "Ray of Emotion", "artist_name": "導凰" },
+      "lrclib_alternates": [{ "track_name": "Ray of Emotion", "artist_name": "TAO" }],
+      "sources": { "uta_ten": "https://utaten.com/lyric/mi26091845/" }
     }
   ]
 }
