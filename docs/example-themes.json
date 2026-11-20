@@ -1,3 +1,4 @@
+[
 {
   "aliases": ["FX Senshi Kurumi-chan", "FX Fighter Kurumi-chan"],
   "metadata_source": "https://fxkurumi-info.com/music/",
@@ -23,4 +24,40 @@
       }
     }
   ]
+},
+{
+  "aliases": [
+    "Mattaku Saikin no Tantei to Kitara",
+    "Mattaku Saikin no Tantei Tokitara",
+    "Detectives These Days Are Crazy!",
+    "まったく最近の探偵ときたら"
+  ],
+  "metadata_source": "https://mattan-anime.com/music/",
+  "songs": [
+    {
+      "slot": "OP",
+      "title": "Suffer",
+      "artist": "岡崎体育",
+      "search_query": "Suffer 岡崎体育",
+      "lrclib_search": { "track_name": "Suffer", "artist_name": "岡崎体育" },
+      "sources": {
+        "uta_net": "https://www.uta-net.com/song/375667/",
+        "uta_ten": "https://utaten.com/lyric/mi25062334/",
+        "lrclib_id": 33704048
+      }
+    },
+    {
+      "slot": "ED",
+      "title": "GORI☆GORI Feez e-Girl!!",
+      "artist": "真白(CV:花澤香菜)VS愉快なおじさんたち(CV:杉田智和)",
+      "search_query": "GORI GORI Feez e-Girl",
+      "lrclib_search": { "track_name": "GORI GORI Feez e-Girl" },
+      "sources": {
+        "uta_net": "https://www.uta-net.com/song/375804/",
+        "uta_ten": "https://utaten.com/lyric/hw25070250/",
+        "lrclib_id": 34272597
+      }
+    }
+  ]
 }
+]

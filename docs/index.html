@@ -61,12 +61,13 @@
       </div>
       <p id="search-status" role="status" class="muted"></p>
       <div id="results"></div>
-      <details>
+      <p class="muted">Other lyrics sources ·
+        <a id="uta-net" href="https://www.uta-net.com/" target="_blank" rel="noopener noreferrer">Uta-Net</a> ·
+        <a id="uta-ten" href="https://utaten.com/search" target="_blank" rel="noopener noreferrer">UtaTen</a>
+      </p>
+      <details id="paste-lyrics">
         <summary>Paste lyrics or LRC</summary>
-        <div class="grid">
-          <label>Source URL<input id="source-url" type="url" placeholder="https://…"></label>
-          <a id="uta-net" target="_blank" rel="noopener noreferrer" hidden>Open Uta-Net lyrics</a>
-        </div>
+        <label>Source URL<input id="source-url" type="url" placeholder="https://…"></label>
         <label>Original lyrics or LRC<textarea id="paste" rows="6"></textarea></label>
         <button id="use-paste" type="button">Use pasted lyrics</button>
       </details>

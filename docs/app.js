@@ -2,8 +2,10 @@ import { timestamp, clock, parseLrc, makeDraft, originalAss, validatedCues, merg
 
 const $ = id => document.getElementById(id);
 const player = $("player");
-const client = "AI-OPED-Merger/0.1.0 (https://github.com/randoomdude/AI-OPED-Merger)";
-const catalog = await fetch("./example-themes.json").then(response => response.json()).catch(() => null);
+const client = "AI-OPED-Merger/0.1.1 (https://github.com/randoomdude/AI-OPED-Merger)";
+const catalog = await fetch("./example-themes.json", { cache: "no-cache" })
+    .then(response => response.json()).catch(() => null);
+const shows = Array.isArray(catalog) ? catalog : catalog ? [catalog] : [];
 let episode;
 let selectedTrack;
 let worker;
@@ -48,9 +50,11 @@ function chapterFor(name) {
 
 function stateFor(name) {
     const chapter = chapterFor(name);
-    const anime = episode.file.name.match(/^\[[^\]]+\]\s*(.+?)\s+-\s+\d+/)?.[1] || "";
-    const known = catalog?.aliases.some(alias => anime.toLowerCase() === alias.toLowerCase());
-    const song = known ? catalog.songs.find(item => item.slot === name) : null;
+    const filename = episode.file.name.replace(/^(?:\[[^\]]+\]\s*)+/, "");
+    const anime = filename.match(/^(.+?)\s+-\s+\d+/)?.[1] || filename.replace(/\.mkv$/i, "");
+    const normalize = title => title.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+    const show = shows.find(entry => entry.aliases.some(alias => normalize(anime) === normalize(alias)));
+    const song = show?.songs.find(item => item.slot === name) || null;
     return {
         chapter, song, windowStart: clock(chapter?.start), windowEnd: clock(chapter?.end),
         query: song?.search_query || song?.title || anime, source: null, lines: [], rows: [],
@@ -77,11 +81,30 @@ function showSlot() {
     $("query").value = state.query;
     $("source-url").value = state.source?.url || state.song?.sources.uta_net || "";
     $("paste").value = "";
-    $("uta-net").hidden = !state.song?.sources.uta_net;
-    if (state.song?.sources.uta_net) $("uta-net").href = state.song.sources.uta_net;
+    showSourceLinks();
     $("search-status").textContent = "";
     $("results").replaceChildren();
     showTiming();
+}
+
+function showSourceLinks() {
+    const state = slots[slot];
+    const query = state.query.trim();
+    for (const [id, key, name, searchUrl] of [
+        ["uta-net", "uta_net", "Uta-Net", "https://www.uta-net.com/"],
+        ["uta-ten", "uta_ten", "UtaTen", query
+            ? "https://utaten.com/lyric/search?" + new URLSearchParams({ title: query })
+            : "https://utaten.com/search"],
+    ]) {
+        const link = $(id);
+        const songPage = state.song?.sources[key];
+        link.href = songPage || searchUrl;
+        link.textContent = songPage ? name + " lyrics" : "Search " + name;
+        link.onclick = () => {
+            if (songPage) $("source-url").value = songPage;
+            $("paste-lyrics").open = true;
+        };
+    }
 }
 
 function loadEpisode(file) {
@@ -169,6 +192,7 @@ for (const [id, key] of [["query", "query"], ["window-start", "windowStart"], ["
     ["first-episode", "firstEpisode"], ["second-episode", "secondEpisode"]]) {
     $(id).addEventListener("input", event => { slots[slot][key] = event.target.value; });
 }
+$("query").addEventListener("input", showSourceLinks);
 for (const key of ["first", "last", "second"]) {
     $(key).addEventListener("change", event => {
         slots[slot][key] = event.target.value === "" ? null : Number(event.target.value);
@@ -232,11 +256,15 @@ $("search").onclick = async () => {
     $("search-status").textContent = "Searching LRCLIB…";
     $("results").replaceChildren();
     try {
-        const records = await lrclib("/api/v2/search?" + new URLSearchParams({ q: query }));
+        const song = searching.song;
+        const exact = song?.lrclib_search && query === song.search_query;
+        const records = await lrclib("/api/v2/search?" + new URLSearchParams(exact ? song.lrclib_search : { q: query }));
         if (slots[slot] !== searching) return;
         const rows = records.filter(record => Number.isInteger(record.id) && (record.hasPlainLyrics || record.hasSyncedLyrics));
         rows.sort((a, b) => Number(b.id === searching.song?.sources.lrclib_id) - Number(a.id === searching.song?.sources.lrclib_id));
-        $("search-status").textContent = rows.length ? "Choose the matching song and recording." : "No lyrics found. Try another title or paste a source.";
+        $("search-status").textContent = rows.length
+            ? "Choose the matching song and recording."
+            : "No lyrics found on LRCLIB. Try the song title or use another lyrics source below.";
         for (const record of rows) {
             const label = document.createElement("div");
             label.append(text("strong", record.trackName), text("span",

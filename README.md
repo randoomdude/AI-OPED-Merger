@@ -8,7 +8,7 @@ The release lives under `docs/`. Serve that folder over HTTP for local developme
 
 1. Choose a downloaded MKV and select its full subtitle track.
 2. Choose Opening or Ending. The app uses named MKV chapters to suggest a window. You can edit both boundaries.
-3. Search LRCLIB and import the matching record, or paste lyrics with their source URL.
+3. Search LRCLIB and import the matching recording, or use the Uta-Net and UtaTen links and paste lyrics with their source URL. For shows in the theme catalog, the app fills the opening and ending titles separately.
 4. For a timed recording, select the first and last lines heard in the episode. Match the first line to the episode playhead. Optionally match a later line to correct steady drift. Generate a draft and listen through each cue before exporting.
 5. For plain lyrics, build a draft with blank timings and mark each line as you listen. You can edit individual start and end times in either mode.
 6. Download the merged ASS, or export a project ZIP with the original and merged subtitles, the fonts, and a JSON record of the lyrics and timing choices.
