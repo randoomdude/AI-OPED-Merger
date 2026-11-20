@@ -73,6 +73,67 @@ export function makeDraft(lines, { first, last, firstEpisode, second, secondEpis
     return rows;
 }
 
+const plainCueDuration = 3000;
+
+export function estimatePlainStart(rows) {
+    let lead = 0;
+    for (const row of rows) {
+        if (!row.include) continue;
+        const start = timestamp(row.start);
+        const end = timestamp(row.end);
+        const anchor = Number.isFinite(start) ? start : end - plainCueDuration;
+        if (Number.isFinite(anchor)) return Math.max(0, anchor - lead);
+        lead += plainCueDuration;
+    }
+    return 0;
+}
+
+export function fillMissingTimes(rows, { start, end }) {
+    // Work in ASS centiseconds so short gaps still produce valid, distinct cues.
+    let cursor = Math.round(start / 10);
+    const cutoff = Math.round(end / 10);
+    if (![cursor, cutoff].every(Number.isFinite) || cursor < 0 || cutoff <= cursor) {
+        throw Error("Enter a valid episode start and end for the song.");
+    }
+
+    const filled = rows.map(row => ({ ...row }));
+    const pending = [];
+    function fillBefore(boundary) {
+        if (!pending.length) return;
+        const length = Math.min(plainCueDuration / 10, Math.floor((boundary - cursor) / pending.length));
+        if (length < 1) throw Error("There’s no room to fill some lines between the entered times. Adjust those times or the song window.");
+        for (const row of pending) {
+            const hasEnd = Boolean(row.end.trim());
+            const lineStart = hasEnd ? boundary - length : cursor;
+            if (!row.start.trim()) row.start = clock(lineStart * 10);
+            if (!hasEnd) row.end = clock((lineStart + length) * 10);
+            cursor = lineStart + length;
+        }
+        pending.length = 0;
+    }
+
+    for (const [index, row] of filled.entries()) {
+        if (!row.include) continue;
+        const lineStart = row.start.trim() ? Math.round(timestamp(row.start) / 10) : null;
+        const lineEnd = row.end.trim() ? Math.round(timestamp(row.end) / 10) : null;
+        if ([lineStart, lineEnd].some(time => time !== null && !Number.isFinite(time))
+            || (lineStart !== null && lineEnd !== null && lineEnd <= lineStart)) {
+            throw Error("Line " + (index + 1) + " needs a valid time before the blanks can be filled.");
+        }
+        if (lineStart !== null) {
+            fillBefore(lineStart);
+            cursor = lineStart;
+        }
+        if (lineStart === null || lineEnd === null) pending.push(row);
+        if (lineEnd !== null) {
+            fillBefore(lineEnd);
+            cursor = lineEnd;
+        }
+    }
+    fillBefore(cutoff);
+    return filled;
+}
+
 // Matroska supplies the ASS script and the dialogue fields separately.
 export function originalAss(track) {
     const header = track.header.replace(/\r\n/g, "\n").trimEnd();

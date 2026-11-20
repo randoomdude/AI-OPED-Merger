@@ -1,4 +1,5 @@
-import { timestamp, clock, parseLrc, makeDraft, originalAss, validatedCues, mergedAss } from "./timing.js";
+import { timestamp, clock, parseLrc, makeDraft, estimatePlainStart, fillMissingTimes,
+    originalAss, validatedCues, mergedAss } from "./timing.js";
 
 const $ = id => document.getElementById(id);
 const player = $("player");
@@ -87,8 +88,8 @@ function stateFor(name) {
     };
 }
 
-function timingDefaults(state) {
-    const start = timestamp(state.windowStart);
+function timingDefaults(state, fallbackStart = NaN) {
+    const start = state.windowStart.trim() ? timestamp(state.windowStart) : fallbackStart;
     const chapterEnd = state.chapter?.end;
     const end = Math.min(start + defaultSongDuration, episode.duration ?? Infinity,
         chapterEnd > start ? chapterEnd : Infinity);
@@ -463,7 +464,9 @@ function showTiming() {
 }
 
 function showRows() {
-    const rows = slots[slot].rows;
+    const state = slots[slot];
+    const rows = state.rows;
+    $("fill-times").hidden = !rows.length || Boolean(state.lines.length);
     $("cue-list").replaceChildren();
     rows.forEach((row, index) => {
         const wrap = document.createElement("div");
@@ -508,6 +511,28 @@ function showRows() {
     showExportSummary();
 }
 
+function fillPlainRows(state, rows) {
+    const defaults = timingDefaults(state, estimatePlainStart(rows));
+    const end = state.windowEnd.trim() ? timestamp(state.windowEnd) : defaults.end;
+    return fillMissingTimes(rows, { start: defaults.start, end: Math.min(end, episode.duration ?? Infinity) });
+}
+
+function hasMissingPlainTimes(state) {
+    return !state.lines.length && state.rows.some(row => row.include && (!row.start.trim() || !row.end.trim()));
+}
+
+$("fill-times").onclick = () => {
+    const state = slots[slot];
+    if (!hasMissingPlainTimes(state)) return status("All included lines already have times.");
+    try {
+        state.rows = fillPlainRows(state, state.rows);
+        showRows();
+        status("Missing times filled. Listen through and adjust the estimates.");
+    } catch (error) {
+        status(error.message, true);
+    }
+};
+
 $("draft").onclick = () => {
     const state = slots[slot];
     if (state.rows.length && !window.confirm("Rebuild this song’s draft and replace its line edits?")) return;
@@ -520,10 +545,11 @@ $("draft").onclick = () => {
             beforeCutEnd: state.beforeCutEnd.trim() ? timestamp(state.beforeCutEnd) : null,
             start: defaults.start,
             end: state.windowEnd.trim() ? timestamp(state.windowEnd) : defaults.end,
-        }) : state.source.plain.split(/\r?\n/).filter(line => line.trim()).map(line =>
-            ({ text: line.trim(), start: "", end: "", include: true }));
+        }) : fillPlainRows(state, state.source.plain.split(/\r?\n/).filter(line => line.trim()).map(line =>
+            ({ text: line.trim(), start: "", end: "", include: true })));
         showRows();
-        status(state.lines.length ? "Draft created. Listen through and adjust its cues." : "Draft created. Set each line’s start and end.");
+        status(state.lines.length ? "Draft created. Listen through and adjust its cues."
+            : "Draft created with estimated times. Listen through and adjust its cues.");
     } catch (error) {
         status(error.message, true);
     }
@@ -546,7 +572,8 @@ function download(name, data, type) {
 function exportProject(zip) {
     try {
         const original = originalAss(selectedTrack);
-        const rows = Object.fromEntries(Object.entries(slots).map(([key, value]) => [key, value.rows]));
+        const rows = Object.fromEntries(Object.entries(slots).map(([key, state]) => [key,
+            !zip && hasMissingPlainTimes(state) ? fillPlainRows(state, state.rows) : state.rows]));
         const name = episode.file.name.replace(/\.mkv$/i, "");
         let cues;
         try {
@@ -560,7 +587,10 @@ function exportProject(zip) {
             const included = Object.entries(slots).filter(([, value]) => value.source && !value.rows.some(row => row.include));
             if (included.length && !window.confirm("Export without timed lyrics for " + included.map(([key]) => key).join(", ") + "?")) return;
             download(name + ".oped.ass", mergedAss(original, cues), "text/plain;charset=utf-8");
-            status("Merged ASS exported.");
+            const filled = Object.entries(rows).filter(([key, draft]) => slots[key].rows !== draft);
+            for (const [key, draft] of filled) slots[key].rows = draft;
+            if (filled.length) showRows();
+            status(filled.length ? "Merged ASS exported with estimated times for blank fields." : "Merged ASS exported.");
             return;
         }
         const pack = {
