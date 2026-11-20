@@ -72,6 +72,11 @@
         <label>Original lyrics or LRC<textarea id="paste" rows="6"></textarea></label>
         <button id="use-paste" type="button">Use pasted lyrics</button>
       </details>
+      <details>
+        <summary>Time from episode audio</summary>
+        <p class="muted">Run the <a href="./whisper-helper.py" download>Whisper helper</a> with Python, select this MKV, and choose OP or ED. Apply pasted lyrics first if you want to keep their wording.</p>
+        <label>Import Whisper timing<input id="import-whisper" type="file" accept=".json,application/json"></label>
+      </details>
       <p id="source-status" class="muted" role="status"></p>
     </section>
     <section id="timing" class="panel" hidden>

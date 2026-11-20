@@ -1,5 +1,6 @@
 import { timestamp, clock, parseLrc, makeDraft, estimatePlainStart, fillMissingTimes,
     originalAss, validatedCues, mergedAss } from "./timing.js";
+import { readWhisperTiming, whisperDraft } from "./whisper.js";
 
 const $ = id => document.getElementById(id);
 const player = $("player");
@@ -438,14 +439,60 @@ $("use-paste").onclick = () => {
     }
 };
 
+function plainRows(text) {
+    return text.split(/\r?\n/).filter(line => line.trim()).map(line =>
+        ({ text: line.trim(), start: "", end: "", include: true }));
+}
+
+$("import-whisper").onchange = async event => {
+    const file = event.target.files[0];
+    if (!episode || !file) return;
+    event.target.value = "";
+    const opened = episode;
+    const selected = slot;
+    const state = slots[selected];
+    const source = state.source;
+    try {
+        if (file.size > 2 * 1024 * 1024) throw Error("Choose the small timing JSON file produced by the helper.");
+        const input = JSON.parse(await file.text());
+        if (episode !== opened || slot !== selected || slots[selected] !== state || state.source !== source) return;
+        const data = readWhisperTiming(input, opened.file, selected, opened.duration);
+        const reference = state.rows.length ? state.rows : state.lines.length
+            ? plainRows(state.lines.slice(state.first, state.last + 1).map(line => line.text).join("\n"))
+            : plainRows(source?.plain ?? "");
+        const { rows, matched } = whisperDraft(data, reference);
+        if (!matched) throw Error(reference.length
+            ? "Whisper couldn’t match any of these lyrics. Check the song window and the lyrics."
+            : "Whisper didn’t return any usable timestamps in this window.");
+        if (state.rows.length && !window.confirm("Update this draft with the Whisper timestamps? Unmatched lyrics stay in the editor unchecked.")) return;
+        sourceRequest?.abort();
+        state.source = { ...(source ?? { provider: "Local Whisper", url: "", plain: rows.map(row => row.text).join("\n"), synced: "" }),
+            whisper: true };
+        state.rows = rows;
+        state.windowStart ||= clock(data.start_ms);
+        state.windowEnd ||= clock(data.end_ms);
+        $("window-start").value = state.windowStart;
+        $("window-end").value = state.windowEnd;
+        showTiming();
+        const total = reference.filter(row => row.include).length;
+        status(reference.length
+            ? "Whisper timed " + matched + " of " + total + " selected lines. Review the draft before exporting."
+            : "Whisper draft imported with " + matched + " timed cues. Review the words and timing before exporting.");
+    } catch (error) {
+        status(error instanceof SyntaxError ? "Choose a valid timing JSON file from the Whisper helper." : error.message, true);
+    }
+};
+
 function showTiming() {
     const state = slots[slot];
     $("timing").hidden = !state.source;
     $("source-status").textContent = state.source ? (state.source.title || state.source.provider)
-        + " · " + (state.lines.length ? state.lines.length + " timed source lines" : "Manual timing") : "";
+        + " · " + (state.source.whisper ? "Timing from episode audio"
+            : state.lines.length ? state.lines.length + " timed source lines" : "Manual timing") : "";
     const timed = Boolean(state.lines.length);
     $("anchors").hidden = !timed;
-    $("plain-hint").hidden = timed;
+    $("plain-hint").hidden = timed || state.source?.whisper === true;
+    $("draft").hidden = state.source?.provider === "Local Whisper";
     if (timed) {
         for (const key of ["first", "last", "second"]) {
             $(key).replaceChildren(...state.lines.map((line, index) =>
@@ -545,9 +592,9 @@ $("draft").onclick = () => {
             beforeCutEnd: state.beforeCutEnd.trim() ? timestamp(state.beforeCutEnd) : null,
             start: defaults.start,
             end: state.windowEnd.trim() ? timestamp(state.windowEnd) : defaults.end,
-        }) : fillPlainRows(state, state.source.plain.split(/\r?\n/).filter(line => line.trim()).map(line =>
-            ({ text: line.trim(), start: "", end: "", include: true })));
-        showRows();
+        }) : fillPlainRows(state, plainRows(state.source.plain));
+        delete state.source.whisper;
+        showTiming();
         status(state.lines.length ? "Draft created. Listen through and adjust its cues."
             : "Draft created with estimated times. Listen through and adjust its cues.");
     } catch (error) {

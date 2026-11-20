@@ -15,6 +15,14 @@ The release lives under `docs/`. Serve that folder over HTTP for local developme
 
 To continue editing later, choose the same MKV and open the project ZIP under **Export**.
 
+## Timing from episode audio
+
+1. With Python, FFmpeg, and [OpenAI Whisper](https://github.com/openai/whisper) installed, download `docs/whisper-helper.py` and run `python whisper-helper.py`. Choose your MKV and enter `OP` or `ED`. The first run with a new model may download its weights. The episode audio is processed locally.
+2. Open the same episode and song in the app. If you have the lyrics, use **Paste lyrics or LRC** first. Under **Time from episode audio**, import the `.whisper.json` file saved beside the episode.
+3. Review the estimated cues. When matching existing lyrics, the app keeps the wording and leaves unmatched lines unchecked. With no lyrics loaded, the app creates a timed Japanese transcript draft.
+
+The helper uses the matching chapter and prefers a Japanese audio track. On the command line you can set a different window with `--start` and `--end`, or use `--output` to save the timing file elsewhere.
+
 Chapters locate the song within the episode. LRCLIB timestamps describe a specific recording. If the timing jumps at a TV edit, select the first line after the edit as the second anchor, choose **Shift from this line**, and enter when you hear it. You can set the previous line's end to leave a pause. Check the resulting lines against the episode and trim the range where needed.
 
 Preview depends on browser support for the episode's video and audio codecs. If the MKV cannot play, use a same-length preview file with the same time origin, or enter timestamps from your player. This release supports embedded ASS tracks and leaves the episode file untouched.
