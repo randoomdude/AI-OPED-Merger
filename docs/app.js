@@ -44,7 +44,9 @@ function option(label, value) {
     return node;
 }
 
+let needsPreviewCheck = false;
 function setPreview(file) {
+    needsPreviewCheck = desktop && file === episode?.file;
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     const input = /\.mkv$/i.test(file.name) ? file.slice(0, file.size, "video/x-matroska") : file;
     previewUrl = URL.createObjectURL(input);
@@ -289,13 +291,35 @@ $("track").addEventListener("change", trackChanged);
 $("slot").addEventListener("change", event => { slot = event.target.value; showSlot(); });
 $("preview").addEventListener("change", event => { if (event.target.files[0]) setPreview(event.target.files[0]); });
 player.addEventListener("timeupdate", () => { $("playhead").textContent = clock(player.currentTime * 1000); });
+async function prepareCompatiblePreview() {
+    if (!needsPreviewCheck || !episode?.desktopId) return;
+    needsPreviewCheck = false;
+    const opened = episode;
+    const original = previewUrl;
+    const note = $("playback-note");
+    note.textContent = "Preparing a compatible video preview on this PC…";
+    try {
+        const url = await desktopJob("prepare_preview", opened.desktopId);
+        if (episode !== opened || previewUrl !== original) return;
+        pendingSeek = pendingSeek ?? player.currentTime * 1000;
+        player.src = url;
+        note.textContent = "Compatible video preview ready.";
+    } catch (error) {
+        if (episode === opened && previewUrl === original) note.textContent = error.message;
+    }
+}
+player.addEventListener("loadeddata", () => {
+    if (!player.videoWidth) prepareCompatiblePreview();
+});
 player.addEventListener("loadedmetadata", () => {
+    if (!player.videoWidth) prepareCompatiblePreview();
     if (Number.isFinite(pendingSeek)) seek(pendingSeek);
     if (episode?.duration && Number.isFinite(player.duration) && Math.abs(player.duration * 1000 - episode.duration) > 1500) {
         $("playback-note").textContent = "The preview duration differs from the MKV. Check that their timelines match.";
     }
 });
 player.addEventListener("error", () => {
+    if (needsPreviewCheck) return prepareCompatiblePreview();
     $("playback-note").textContent = "This file could not play in your browser. Use a matching preview file or enter times from your video player.";
 });
 

@@ -41,6 +41,25 @@ class Desktop:
         self._process = None
         self._closed = False
 
+    def prepare_preview(self, token):
+        source = self._episode(token)
+        ffmpeg = shutil.which("ffmpeg") or "C:/ffmpeg/bin/ffmpeg.exe"
+        if not Path(ffmpeg).is_file():
+            raise ValueError("Install FFmpeg to prepare a compatible video preview.")
+        with self._preview_lock:
+            self._episode(token)
+            output = self._preview_folder / (token + ".mp4")
+            if not output.exists():
+                try:
+                    self._preview_runner._run([ffmpeg, "-nostdin", "-v", "error", "-i", str(source),
+                        "-map", "0:v:0", "-map", "0:a:0?", "-vf", "scale=-2:480,format=yuv420p",
+                        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-c:a", "aac",
+                        "-movflags", "+faststart", str(output)])
+                except Exception:
+                    output.unlink(missing_ok=True)
+                    raise
+            return self._preview_folder.name + "/" + output.name
+
     def _attach(self, window):
         self._window = window
         view = window.native.webview
@@ -59,7 +78,7 @@ class Desktop:
         def run_job(message):
             request = message.get("id")
             try:
-                methods = {"time_song": self.time_song, "save_mkv": self.save_mkv}
+                methods = {"time_song": self.time_song, "save_mkv": self.save_mkv, "prepare_preview": self.prepare_preview}
                 result = methods[message["action"]](*message["args"])
                 response = {"id": request, "value": result}
             except Exception as error:
@@ -77,6 +96,8 @@ class Desktop:
             if action == "oped_ready":
                 sender.CoreWebView2.PostWebMessageAsJson('{"opedDesktop":true}')
             elif action == "episode":
+                self._preview_runner._close()
+                self._preview_runner = Desktop()
                 self._selected = None
                 token = data.get("id", "")
                 files = list(event.AdditionalObjects or ())
@@ -84,7 +105,7 @@ class Desktop:
                     path = Path(str(files[0].Path))
                     if path.is_file() and path.suffix.lower() == ".mkv":
                         self._selected = (token, path, path.stat())
-            elif action in ("time_song", "save_mkv"):
+            elif action in ("time_song", "save_mkv", "prepare_preview"):
                 Thread(target=run_job, args=(data,)).start()
 
         view.NavigationStarting += navigation
@@ -193,7 +214,16 @@ def main():
                                    width=1100, height=820, min_size=(640, 480))
     window.events.before_show += api._attach
     window.events.closed += api._close
-    webview.start(gui="edgechromium")
+    api._preview_lock = Lock()
+    api._preview_runner = Desktop()
+    with TemporaryDirectory(prefix="preview-", dir=DOCS, ignore_cleanup_errors=True) as folder:
+        api._preview_folder = Path(folder)
+        try:
+            webview.start(gui="edgechromium")
+        finally:
+            api._preview_runner._close()
+            with api._preview_lock:
+                pass
 
 
 if __name__ == "__main__":

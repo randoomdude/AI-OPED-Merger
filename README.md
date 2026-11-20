@@ -48,7 +48,9 @@ The helper uses the matching chapter and prefers a Japanese audio track. On the 
 
 Chapters locate the song within the episode. LRCLIB timestamps describe a specific recording. If the timing jumps at a TV edit, select the first line after the edit as the second anchor, choose **Shift from this line**, and enter when you hear it. You can set the previous line's end to leave a pause. Check the resulting lines against the episode and trim the range where needed.
 
-Preview depends on browser support for the episode's video and audio codecs. If the MKV cannot play, use a same-length preview file with the same time origin, or enter timestamps from your player. This release supports embedded ASS tracks and leaves the episode file untouched.
+The Windows app automatically prepares a temporary 480p H.264 preview with FFmpeg if its player opens the episode without a video track or reports a playback error. The timing editor and MKV export continue using the selected episode.
+
+Web preview depends on browser support for the episode's video and audio codecs. If the MKV cannot play, use a same-length preview file with the same time origin, or enter timestamps from your player. This release supports embedded ASS tracks and leaves the episode file untouched.
 
 Searches send titles and artist names to LRCLIB. The app also sends the search text to AniList when it needs to look up title variants. Selected episodes, fonts, and projects are processed in memory and exported to your computer. Save a project ZIP before closing the page.
 
