@@ -110,7 +110,7 @@ export function whisperDraft(data, reference) {
         return { rows, matched: rows.filter(row => row.include).length };
     }
     const audio = timedCharacters(data.segments);
-    const lines = reference.map(row => characters(lyricForms(row.text).base));
+    const lines = reference.map(row => row.include ? characters(lyricForms(row.text).base) : []);
     const matches = matchLines(lines, audio);
     let matched = 0;
     const rows = reference.map((row, index) => {
@@ -124,10 +124,10 @@ export function whisperDraft(data, reference) {
             const cue = draftRow(row.text, audio[first].start, audio[last].end);
             if (cue.include) {
                 matched++;
-                return cue;
+                return { ...row, start: cue.start, end: cue.end };
             }
         }
-        return { ...row, include: false };
+        return row;
     });
     return { rows, matched };
 }

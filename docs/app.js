@@ -1,5 +1,6 @@
 import { dialogueIntervals, dialogueOffset, overlapsDialogue, songGaps } from "./caption-alignment.js";
 import { fetchCaptions, parseCaptions, suggestedWindow, lyricWindows, windowCaptions } from "./jimaku.js";
+import { shiftRows, songRows } from "./reuse.js";
 import { rubyMarkup } from "./furigana.js";
 import { timestamp, clock, parseLrc, makeDraft, estimatePlainStart, fillMissingTimes,
     originalAss, validatedCues, mergedAss } from "./timing.js";
@@ -55,11 +56,11 @@ function setPreview(file) {
     player.src = previewUrl;
 }
 
-function chapterFor(name) {
+function findChapter(chapters, name) {
     const pattern = name === "OP"
         ? /^(?:(?:op|opening(?: credits)?|intro)(?:\s*\d+)?|オープニング)$/i
         : /^(?:(?:ed|ending(?: credits)?|credits|end credits)(?:\s*\d+)?|エンディング)$/i;
-    return episode.chapters.find(chapter => pattern.test(chapter.title.trim()));
+    return chapters.find(chapter => pattern.test(chapter.title.trim()));
 }
 
 function titleKey(title) {
@@ -86,7 +87,7 @@ function showForSearch(state, query) {
 }
 
 function stateFor(name) {
-    const chapter = chapterFor(name);
+    const chapter = findChapter(episode.chapters, name);
     const { anime } = episode;
     const show = catalogShow(anime);
     const song = show?.songs.find(item => item.slot === name) || null;
@@ -145,6 +146,9 @@ function trackChanged() {
 }
 
 function showSlot() {
+    $("whisper-review").replaceChildren();
+    $("reuse-review").replaceChildren();
+    $("reuse-file").value = "";
     sourceRequest?.abort();
     const state = slots[slot];
     $("window-start").value = state.windowStart;
@@ -850,7 +854,7 @@ $("jimaku-search").onclick = () => runJimakuSearch();
 
 function setSource(source) {
     const state = slots[slot];
-    if (state.rows.length && !window.confirm("Replace the lyrics and timing draft for this song?")) return false;
+    if (state.source && !window.confirm("Replace the lyrics and timing draft for this song?")) return false;
     state.source = source;
     state.lines = parseLrc(source.synced || "");
     state.rows = [];
@@ -956,6 +960,85 @@ function plainRows(text) {
         ({ text: line.trim(), start: "", end: "", include: true }));
 }
 
+function readPreviousMkv(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new Worker("./extract.js");
+        reader.onerror = event => { reader.terminate(); reject(Error(event.message)); };
+        reader.onmessage = ({data}) => {
+            if ("progress" in data) return;
+            reader.terminate();
+            if (data.error) reject(Error(data.error));
+            else resolve(data);
+        };
+        reader.postMessage(file);
+    });
+}
+
+$("reuse-file").onchange = async event => {
+    const file = event.target.files[0];
+    const state = slots[slot];
+    const name = slot;
+    const review = $("reuse-review");
+    const current = () => slots?.[slot] === state && $("reuse-file").files[0] === file;
+    review.textContent = "Finding " + name + " subtitle events…";
+    try {
+        let tracks;
+        let anchor;
+        if (/\.mkv$/i.test(file.name)) {
+            const old = await readPreviousMkv(file);
+            tracks = old.tracks.map(track => ({name: track.name || "Track " + track.number, script: originalAss(track)}));
+            anchor = findChapter(old.chapters, name)?.start;
+        } else tracks = [{name: file.name, script: await file.text()}];
+        if (!current()) return;
+        const choices = tracks.map(track => ({name: track.name, rows: songRows(track.script, name)})).filter(item => item.rows.length);
+        if (!choices.length) throw Error("No " + name + " events labeled by actor or style in this file. Choose a completed song export or switch Opening / Ending.");
+        const select = document.createElement("select");
+        select.setAttribute("aria-label", "Previous song track");
+        choices.forEach((item, i) => select.append(option(item.name, i)));
+        const preview = document.createElement("div");
+        review.replaceChildren(select, preview);
+        function show() {
+            const rows = choices[select.value].rows;
+            const oldStart = document.createElement("input");
+            const newStart = document.createElement("input");
+            oldStart.value = clock(anchor ?? timestamp(rows[0].start));
+            newStart.value = state.windowStart || oldStart.value;
+            const oldLabel = text("label", "Previous episode song start" + (anchor == null ? " (defaults to first lyric)" : " (chapter)"));
+            const newLabel = text("label", "Current episode song start");
+            oldLabel.append(oldStart);
+            newLabel.append(newStart);
+            const sample = document.createElement("details");
+            sample.append(text("summary", "Review " + rows.length + " timed lyric groups"));
+            for (const row of rows) sample.append(text("p", row.start + " · " + row.text));
+            const apply = text("button", "Import timed " + name);
+            function update() {
+                const delta = timestamp(newStart.value) - timestamp(oldStart.value);
+                apply.disabled = !Number.isFinite(delta);
+                apply.textContent = "Import " + name + (apply.disabled ? "" : " with " + (delta >= 0 ? "+" : "") + (delta/1000).toFixed(3) + " s shift");
+            }
+            oldStart.oninput = newStart.oninput = update;
+            update();
+            apply.onclick = () => {
+                if (!current()) return;
+                try {
+                    const shifted = shiftRows(rows, timestamp(newStart.value) - timestamp(oldStart.value), episode.duration);
+                    if (!setSource({provider: "Previous episode", title: file.name, plain: "", synced: "", url: ""})) return;
+                    state.rows = shifted;
+                    state.windowStart = clock(timestamp(newStart.value));
+                    state.windowEnd = "";
+                    state.windowOrigin = "manual";
+                    syncWindowFields();
+                    showTiming();
+                    status("Imported " + name + " with its original ASS formatting.");
+                } catch (error) { status(error.message, true); }
+            };
+            preview.replaceChildren(oldLabel, newLabel, sample, apply);
+        }
+        select.onchange = show;
+        show();
+    } catch (error) { if (current()) review.textContent = error.message; }
+};
+
 $("import-whisper").onchange = async event => {
     const file = event.target.files[0];
     if (!episode || !file) return;
@@ -1005,27 +1088,53 @@ async function applyWhisper(read) {
             return status("The episode, song, or draft changed while Whisper timing was loading. Run it again for the current selection.");
         }
         const data = readWhisperTiming(input, opened.file, selected, opened.duration);
-        const reference = state.rows.length ? state.rows : state.lines.length
-            ? plainRows(state.lines.slice(state.first, state.last + 1).map(line => line.text).join("\n"))
-            : plainRows(source?.plain ?? "");
+        if (!state.rows.length && state.lines.length) {
+            throw Error("Build the timing draft from your timed lyrics first, then compare it with Whisper.");
+        }
+        const reference = state.rows.length ? state.rows : plainRows(source?.plain ?? "");
         const { rows, matched } = whisperDraft(data, reference);
-        if (!matched) throw Error(reference.length
-            ? "Whisper couldn’t match any of these lyrics. Check the song window and the lyrics."
-            : "Whisper didn’t return any usable timestamps in this window.");
-        if (state.rows.length && !window.confirm("Update this draft with the Whisper timestamps? Unmatched lyrics stay in the editor unchecked.")) return;
-        sourceRequest?.abort();
-        state.source = { ...(source ?? { provider: "Local Whisper", url: "", plain: rows.map(row => row.text).join("\n"), synced: "" }),
-            whisper: true };
-        state.rows = rows;
-        state.windowStart ||= clock(data.start_ms, 3);
-        state.windowEnd ||= clock(data.end_ms, 3);
-        $("window-start").value = state.windowStart;
-        $("window-end").value = state.windowEnd;
-        showTiming();
-        const total = reference.filter(row => row.include).length;
-        status(reference.length
-            ? "Whisper timed " + matched + " of " + total + " selected lines. Review the draft before exporting."
-            : "Whisper draft imported with " + matched + " timed cues. Review the words and timing before exporting.");
+        const review = $("whisper-review");
+        review.replaceChildren(text("p", reference.length
+            ? matched + " of " + reference.filter(row => row.include).length + " selected lines matched. Review the proposed times."
+            : "Whisper found " + matched + " transcript lines. Choose whether to use them as lyrics."));
+        const changes = reference.flatMap((row, i) => rows[i] !== row ? [{ before: row, after: rows[i] }] : []);
+        for (const {before, after} of changes) {
+            review.append(text("p", before.text + " · " + (before.start || "untimed") + " – " + (before.end || "untimed")
+                + " → " + after.start + " – " + after.end));
+        }
+        function offer(label, action) {
+            const button = text("button", label);
+            button.onclick = () => {
+                if (slots[slot] !== state || JSON.stringify(state) !== snapshot) {
+                    review.replaceChildren();
+                    return status("The draft changed. Compare the timing again.", true);
+                }
+                try { action(); } catch (error) { status(error.message, true); }
+            };
+            review.append(button);
+        }
+        function apply(next, replace = false) {
+            if (replace && !setSource({provider: "Local Whisper", plain: next.map(row => row.text).join("\n"), synced: "", url: ""})) return;
+            state.rows = next;
+            state.source = {...state.source, whisper: true};
+            state.windowStart ||= clock(data.start_ms);
+            state.windowEnd ||= clock(data.end_ms);
+            syncWindowFields();
+            review.replaceChildren();
+            showTiming();
+            status("Applied the selected Whisper changes.");
+        }
+        const offsets = changes.filter(({before}) => Number.isFinite(timestamp(before.start)))
+            .map(({before, after}) => timestamp(after.start) - timestamp(before.start)).sort((a,b) => a-b);
+        if (offsets.length) {
+            const mid = Math.floor(offsets.length / 2);
+            const delta = Math.round((offsets[mid] + offsets[Math.floor((offsets.length-1)/2)]) / 20) * 10;
+            offer("Shift all lines by " + (delta / 1000) + " s", () => apply(shiftRows(reference, delta, opened.duration)));
+        }
+        if (changes.length) offer("Apply matched line times only", () => apply(rows));
+        offer(reference.length ? "Replace lyrics with Whisper transcription…" : "Use Whisper transcription", () =>
+            apply(whisperDraft(data, []).rows, true));
+        status("Whisper comparison ready. Your draft is unchanged.");
     } catch (error) {
         status(error instanceof SyntaxError ? "Choose a valid timing JSON file from the Whisper helper." : error.message, true);
     }
@@ -1040,7 +1149,7 @@ function showTiming() {
     const timed = Boolean(state.lines.length);
     $("anchors").hidden = !timed;
     $("plain-hint").hidden = timed || state.source?.whisper === true || state.source?.provider === "Jimaku";
-    $("draft").hidden = ["Local Whisper", "Jimaku"].includes(state.source?.provider);
+    $("draft").hidden = ["Local Whisper", "Jimaku", "Previous episode"].includes(state.source?.provider);
     if (timed) {
         for (const key of ["first", "last", "second"]) {
             $(key).replaceChildren(...state.lines.map((line, index) =>
@@ -1076,6 +1185,7 @@ function showRows() {
         const lyric = document.createElement("textarea");
         lyric.rows = 2;
         lyric.value = row.text;
+        lyric.readOnly = Boolean(row.events);
         lyric.setAttribute("aria-label", "Lyric line " + (index + 1));
         lyric.oninput = () => { row.text = lyric.value; };
         body.append(label, lyric);
@@ -1165,6 +1275,11 @@ function download(name, data, type) {
 }
 
 async function exportProject(zip, saveMkv = false) {
+    function report(message, error = false) {
+        $("export-status").textContent = message;
+        status(message, error);
+    }
+    $("export-status").textContent = "";
     try {
         const original = originalAss(selectedTrack);
         const rows = Object.fromEntries(Object.entries(slots).map(([key, state]) => [key,
@@ -1185,14 +1300,14 @@ async function exportProject(zip, saveMkv = false) {
             let saved;
             if (saveMkv) {
                 $("jimaku-whisper").disabled = $("export-mkv").disabled = $("run-whisper").disabled = true;
-                status("Choose where to save the new MKV.");
+                report("Choose a new filename. After you select Save, the app writes the MKV.");
                 try {
                     saved = await desktopJob("save_mkv", episode.desktopId, ass, selectedTrack.language);
                 } finally {
                     $("jimaku-whisper").disabled = $("export-mkv").disabled = $("run-whisper").disabled = false;
                 }
-                if (!saved) return status("Save canceled.");
-                status("Saved " + saved.path + (saved.warnings.length ? " · " + saved.warnings.join(" ") : ""));
+                if (!saved) return report("Save canceled.");
+                report("Saved " + saved.path + (saved.warnings.length ? " · " + saved.warnings.join(" ") : ""));
                 return;
             }
             download(name + ".oped.ass", ass, "text/plain;charset=utf-8");
@@ -1218,7 +1333,7 @@ async function exportProject(zip, saveMkv = false) {
         download(name + ".oped.zip", fflate.zipSync(pack, { level: 0 }), "application/zip");
         status(cues?.length ? "Project ZIP exported with merged ASS." : "Project ZIP exported with original subtitles and draft data.");
     } catch (error) {
-        status(error.message, true);
+        report(error.message, true);
     }
 }
 

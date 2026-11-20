@@ -181,10 +181,16 @@ class Desktop:
             from System import Action
             choice = None
 
+            proposed = source.with_suffix(".oped.mkv")
+            number = 2
+            while proposed.exists():
+                proposed = source.with_suffix(f".oped ({number}).mkv")
+                number += 1
+
             def choose_destination():
                 nonlocal choice
                 choice = self._window.create_file_dialog(webview.FileDialog.SAVE, directory=str(source.parent),
-                        save_filename=source.stem + ".oped.mkv", file_types=("Matroska video (*.mkv)",))
+                        save_filename=proposed.name, file_types=("Matroska video (*.mkv)",))
 
             self._window.native.Invoke(Action(choose_destination))
             if not choice:

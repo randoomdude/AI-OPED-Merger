@@ -158,8 +158,8 @@ export function validatedCues(slots, duration) {
             if (![start, end].every(Number.isFinite) || !(end > start) || (duration && end > Math.ceil(duration / 10) * 10)) {
                 throw Error(slot + " line " + (index + 1) + " needs a valid start and end inside the episode.");
             }
-            if (!row.text.trim()) throw Error(slot + " line " + (index + 1) + " needs lyric text.");
-            cues.push({ slot, start, end, text: row.text });
+            if (!row.text.trim() && !row.events?.length) throw Error(slot + " line " + (index + 1) + " needs lyric text.");
+            cues.push({ slot, start, end, text: row.text, events: row.events });
         }
     }
     return cues.sort((a, b) => a.start - b.start);
@@ -179,10 +179,28 @@ export function mergedAss(original, cues, furigana = "above") {
     const margin = Math.round(height * .04);
     const definition = "Style: " + style + ",Arial," + size
         + ",&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,8,12,12," + margin + ",1";
-    const withStyle = original.slice(0, events).trimEnd() + "\n" + definition + "\n\n" + original.slice(events);
+    const definitions = [definition.slice(7)];
+    const styleNames = new Map();
+    function importedStyle(event) {
+        if (styleNames.has(event.definition)) return styleNames.get(event.definition);
+        const suffix = event.definition.slice(event.definition.indexOf(","));
+        let name = event.style;
+        const existing = [...original.matchAll(/^Style: (.+)$/gm)].map(match => match[1].trimEnd()).concat(definitions);
+        while (existing.some(value => value.startsWith(name + ",") && value !== name + suffix)) name += "_";
+        if (!existing.includes(name + suffix)) definitions.push(name + suffix);
+        styleNames.set(event.definition, name);
+        return name;
+    }
     let active = [];
     const dialogue = [];
     for (const cue of cues) {
+        if (cue.events?.length) {
+            for (const event of cue.events) {
+                dialogue.push("Dialogue: " + [event.layer, clock(cue.start), clock(cue.end), importedStyle(event),
+                    event.actor, event.left, event.right, event.vertical, event.effect, event.content].join(","));
+            }
+            continue;
+        }
         active = active.filter(item => item.end > cue.start);
         const top = Math.max(margin, ...active.map(item => item.bottom));
         const ruby = furigana === "above" && /《|<ruby\b/i.test(cue.text);
@@ -195,5 +213,7 @@ export function mergedAss(original, cues, furigana = "above") {
         active.push({ end: cue.end, bottom: layout?.bottom ?? top + size * cue.text.split(/\r?\n/).length + 3,
             positioned: Boolean(layout) });
     }
+    const withStyle = original.replace(/(\[V4\+ Styles\][\s\S]*?)(?=\n\[|$)/, section =>
+        section.trimEnd() + "\n" + definitions.map(value => value.startsWith("Style: ") ? value : "Style: " + value).join("\n") + "\n");
     return withStyle.trimEnd() + "\n" + dialogue.join("\n") + "\n";
 }

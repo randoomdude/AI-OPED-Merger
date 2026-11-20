@@ -95,12 +95,18 @@
         <p class="muted">For furigana, type 剣《つるぎ》 or paste text with HTML ruby readings.</p>
         <button id="use-paste" type="button">Use pasted lyrics</button>
       </details>
+      <details id="reuse-panel">
+        <summary>Reuse a timed opening or ending</summary>
+        <label>Previous episode subtitles<input id="reuse-file" type="file" accept=".ass,.mkv"></label>
+        <div id="reuse-review"></div>
+      </details>
       <details id="audio-options" open>
         <summary>Time from episode audio with Whisper</summary>
         <button id="run-whisper" type="button" hidden>Time with local Whisper</button>
         <p id="whisper-progress" class="muted" role="status" hidden></p>
         <p id="helper-instructions" class="muted">Run the <a href="./whisper-helper.py" download>Whisper helper</a> with Python, select this MKV, and choose OP or ED. Apply pasted lyrics first if you want to keep their wording.</p>
         <label>Import Whisper timing<input id="import-whisper" type="file" accept=".json,application/json"></label>
+        <div id="whisper-review"></div>
       </details>
       <p id="source-status" class="muted" role="status"></p>
     </section>
@@ -141,6 +147,7 @@
       <h2>Export</h2>
       <p id="export-summary" class="muted"></p>
       <label>Furigana in exported subtitles<select id="furigana-mode"><option value="above">Furigana above each annotated word</option><option value="inline">Inline readings in parentheses</option><option value="base">Lyrics without readings</option></select></label>
+      <output id="export-status" role="status"></output>
       <div class="row export-actions">
         <button id="export-mkv" class="primary" type="button" hidden>Save as new MKV</button>
         <button id="export-ass" class="primary" type="button">Download merged ASS</button>
