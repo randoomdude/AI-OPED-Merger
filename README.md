@@ -7,7 +7,7 @@ The release lives under `docs/`. Serve that folder over HTTP for local developme
 ## Using the app
 
 1. Choose a downloaded MKV and select its full subtitle track.
-2. Choose Opening or Ending. The app uses the matching MKV chapter start when available. Enter a start if the chapter is missing. The draft ends 1:30 later, or earlier if the chapter or episode ends sooner. You can enter a different end time.
+2. Choose Opening or Ending. The app uses the matching MKV chapter start when available. Enter a start if the chapter is missing. The draft ends 1:34 later, or earlier if the chapter or episode ends sooner. You can enter a different end time.
 3. Search LRCLIB and import the matching recording, or use the Uta-Net and UtaTen links and paste lyrics with their source URL. For shows in the theme catalog, the app fills the opening and ending titles separately.
 4. For a timed recording, build a draft to place the source timestamps relative to the episode start. To adjust the timing, choose the first line heard and match it to the playhead. You can also trim the line range or match a later line to correct steady drift. Listen through the draft before exporting.
 5. For plain lyrics, build a draft with blank timings and mark each line as you listen. You can edit individual start and end times in either mode.
@@ -15,7 +15,7 @@ The release lives under `docs/`. Serve that folder over HTTP for local developme
 
 To continue editing later, choose the same MKV and open the project ZIP under **Export**.
 
-Chapters locate the song within the episode. LRCLIB timestamps describe a specific recording. They can differ from a TV cut, so trim the source line range and check each cue. If the recording skips or repeats material within that range, use line-by-line timing across the edit.
+Chapters locate the song within the episode. LRCLIB timestamps describe a specific recording. If the timing jumps at a TV edit, select the first line after the edit as the second anchor, choose **Shift from this line**, and enter when you hear it. You can set the previous line's end to leave a pause. Check the resulting lines against the episode and trim the range where needed.
 
 Preview depends on browser support for the episode's video and audio codecs. If the MKV cannot play, use a same-length preview file with the same time origin, or enter timestamps from your player. This release supports embedded ASS tracks and leaves the episode file untouched.
 

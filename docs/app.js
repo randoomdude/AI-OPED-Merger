@@ -2,7 +2,7 @@ import { timestamp, clock, parseLrc, makeDraft, originalAss, validatedCues, merg
 
 const $ = id => document.getElementById(id);
 const player = $("player");
-const defaultSongDuration = 90_000;
+const defaultSongDuration = 94_000;
 const client = "AI-OPED-Merger/0.1.1 (https://github.com/randoomdude/AI-OPED-Merger)";
 const catalog = await fetch("./example-themes.json", { cache: "no-cache" })
     .then(response => response.json()).catch(() => null);
@@ -60,6 +60,7 @@ function stateFor(name) {
         chapter, song, windowStart: clock(chapter?.start), windowEnd: "",
         query: song?.search_query || song?.title || anime, source: null, lines: [], rows: [],
         first: 0, last: 0, second: null, firstEpisode: "", secondEpisode: "",
+        secondMode: "drift", beforeCutEnd: "",
     };
 }
 
@@ -74,8 +75,14 @@ function timingDefaults(state) {
 
 function showTimingDefaults() {
     const defaults = timingDefaults(slots[slot]);
-    $("window-end").placeholder = clock(defaults.end) || "Up to 1:30 after episode start";
+    $("window-end").placeholder = clock(defaults.end) || "Up to 1:34 after episode start";
     $("first-episode").placeholder = clock(defaults.firstEpisode) || "Set the episode start first";
+}
+
+function showSecondAnchor() {
+    const state = slots[slot];
+    $("second-options").hidden = state.second === null;
+    $("cut-options").hidden = state.secondMode !== "shift";
 }
 
 function trackChanged() {
@@ -205,7 +212,7 @@ $("jump").onclick = () => seek(timestamp($("window-start").value));
 $("back").onclick = () => seek(player.currentTime * 1000 - 2000);
 $("forward").onclick = () => seek(player.currentTime * 1000 + 2000);
 for (const [id, key] of [["query", "query"], ["window-start", "windowStart"], ["window-end", "windowEnd"],
-    ["first-episode", "firstEpisode"], ["second-episode", "secondEpisode"]]) {
+    ["first-episode", "firstEpisode"], ["second-episode", "secondEpisode"], ["before-cut-end", "beforeCutEnd"]]) {
     $(id).addEventListener("input", event => { slots[slot][key] = event.target.value; });
 }
 $("query").addEventListener("input", showSourceLinks);
@@ -216,6 +223,11 @@ for (const key of ["first", "last", "second"]) {
     });
 }
 $("first").addEventListener("change", showTimingDefaults);
+$("second").addEventListener("change", showSecondAnchor);
+$("second-mode").addEventListener("change", event => {
+    slots[slot].secondMode = event.target.value;
+    showSecondAnchor();
+});
 for (const button of document.querySelectorAll("[data-capture]")) {
     button.onclick = () => {
         if (!player.readyState) return status("Load a playable preview before capturing the playhead.", true);
@@ -263,6 +275,8 @@ function setSource(source) {
     state.second = null;
     state.firstEpisode = "";
     state.secondEpisode = "";
+    state.secondMode = "drift";
+    state.beforeCutEnd = "";
     showTiming();
     return true;
 }
@@ -344,8 +358,11 @@ function showTiming() {
         }
         $("first-episode").value = state.firstEpisode;
         $("second-episode").value = state.secondEpisode;
+        $("second-mode").value = state.secondMode;
+        $("before-cut-end").value = state.beforeCutEnd;
     }
     showTimingDefaults();
+    showSecondAnchor();
     showRows();
 }
 
@@ -403,7 +420,9 @@ $("draft").onclick = () => {
         state.rows = state.lines.length ? makeDraft(state.lines, {
             first: state.first, last: state.last, second: state.second,
             firstEpisode: state.firstEpisode.trim() ? timestamp(state.firstEpisode) : defaults.firstEpisode,
-            secondEpisode: timestamp(state.secondEpisode), start: defaults.start,
+            secondEpisode: timestamp(state.secondEpisode), secondMode: state.secondMode,
+            beforeCutEnd: state.beforeCutEnd.trim() ? timestamp(state.beforeCutEnd) : null,
+            start: defaults.start,
             end: state.windowEnd.trim() ? timestamp(state.windowEnd) : defaults.end,
         }) : state.source.plain.split(/\r?\n/).filter(line => line.trim()).map(line =>
             ({ text: line.trim(), start: "", end: "", include: true }));
@@ -495,9 +514,10 @@ $("restore").onchange = async event => {
                 throw Error("The ZIP does not contain a valid timing draft.");
             }
             const base = stateFor(name);
-            for (const key of ["query", "windowStart", "windowEnd", "firstEpisode", "secondEpisode"]) {
+            for (const key of ["query", "windowStart", "windowEnd", "firstEpisode", "secondEpisode", "beforeCutEnd"]) {
                 if (typeof song[key] === "string") base[key] = song[key];
             }
+            if (song.secondMode === "shift") base.secondMode = "shift";
             base.rows = song.rows;
             if (song.source && typeof song.source.plain === "string" && typeof song.source.synced === "string") {
                 base.source = song.source;

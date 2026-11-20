@@ -33,31 +33,42 @@ export function parseLrc(text) {
     return lines.sort((a, b) => a.time - b.time);
 }
 
-export function makeDraft(lines, { first, last, firstEpisode, second, secondEpisode, start, end }) {
+export function makeDraft(lines, { first, last, firstEpisode, second, secondEpisode, secondMode,
+    beforeCutEnd = null, start, end }) {
     if (![start, end, firstEpisode].every(Number.isFinite) || start < 0 || end <= start || firstEpisode < start || firstEpisode >= end) {
         throw Error("Enter a valid song window and place the first lyric inside it.");
     }
     if (!lines[first] || !lines[last] || last < first) throw Error("Choose a first and last line in order.");
     const firstSource = lines[first].time;
+    const split = second !== null && secondMode === "shift";
+    const secondSource = lines[second]?.time;
     let scale = 1;
     if (second !== null) {
-        const secondSource = lines[second]?.time;
         if (second <= first || second > last || !(secondSource > firstSource) || !(secondEpisode > firstEpisode) || secondEpisode >= end) {
             throw Error("The second anchor must be a later line within the selected range and song window.");
         }
-        scale = (secondEpisode - firstEpisode) / (secondSource - firstSource);
+        if (split) {
+            const previousStart = firstEpisode + lines[second - 1].time - firstSource;
+            if (secondEpisode <= previousStart) throw Error("The shifted line must start after the preceding line.");
+            if (beforeCutEnd !== null && !(beforeCutEnd > previousStart && beforeCutEnd <= secondEpisode)) {
+                throw Error("Set the previous line’s end between its start and the shifted line.");
+            }
+        } else {
+            scale = (secondEpisode - firstEpisode) / (secondSource - firstSource);
+        }
     }
+    const episodeTime = index => split && index >= second
+        ? secondEpisode + lines[index].time - secondSource
+        : firstEpisode + (lines[index].time - firstSource) * scale;
     const cutoff = Math.round(end / 10) * 10;
     const rows = [];
     for (let index = first; index <= last; index++) {
-        const line = lines[index];
-        const lineStart = Math.round(firstEpisode + (line.time - firstSource) * scale);
+        const lineStart = Math.round(episodeTime(index));
         if (Math.round(lineStart / 10) * 10 >= cutoff) break;
-        const nextStart = index < last
-            ? Math.round(firstEpisode + (lines[index + 1].time - firstSource) * scale)
-            : lineStart + 4000;
-        const lineEnd = Math.min(cutoff, nextStart);
-        rows.push({ text: line.text, start: clock(lineStart), end: lineEnd > lineStart ? clock(lineEnd) : "", include: true });
+        const nextStart = index < last ? Math.round(episodeTime(index + 1)) : lineStart + 4000;
+        const cueEnd = split && index + 1 === second ? beforeCutEnd ?? nextStart : nextStart;
+        const lineEnd = Math.min(cutoff, cueEnd);
+        rows.push({ text: lines[index].text, start: clock(lineStart), end: lineEnd > lineStart ? clock(lineEnd) : "", include: true });
     }
     return rows;
 }
