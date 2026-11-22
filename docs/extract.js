@@ -69,9 +69,9 @@ function readChapters(bytes) {
         const start = unsigned(field(fields, ids.start));
         if (start === null || unsigned(field(fields, ids.hidden)) || !unsigned(field(fields, ids.enabled), 1)) return [];
         const end = unsigned(field(fields, ids.end));
-        const display = field(fields, ids.display);
-        const label = display && field(children(display), ids.title);
-        return [{ title: label ? decode.decode(label) : "", start: start / 1e6, end: end === null ? null : end / 1e6 }];
+        const titles = fields.filter(entry => entry.id === ids.display)
+            .map(entry => decode.decode(field(children(entry.data), ids.title))).filter(Boolean);
+        return [{ title: titles[0] || "", titles, start: start / 1e6, end: end === null ? null : end / 1e6 }];
     }).sort((a, b) => a.start - b.start);
 }
 

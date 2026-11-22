@@ -9,12 +9,34 @@ import re
 import shutil
 import subprocess
 import sys
+import unicodedata
 
 
 CHAPTERS = {
-    "OP": r"(?:(?:op|opening(?: credits)?|intro)(?:\s*\d+)?|オープニング)",
-    "ED": r"(?:(?:ed|ending(?: credits)?|credits|end credits)(?:\s*\d+)?|エンディング)",
+    "OP": r"(?:^|[^a-z0-9])(?:op(?:ening)?|ncop)(?:\s*\d+)?(?![a-z0-9])|オープニング|主題歌OP",
+    "ED": r"(?:^|[^a-z0-9])(?:ed|ending|nced)(?:\s*\d+)?(?![a-z0-9])|エンディング|主題歌ED",
 }
+
+
+def find_chapter(chapters, slot):
+    def label(item):
+        return unicodedata.normalize("NFKC", item[0]).strip()
+
+    other = "ED" if slot == "OP" else "OP"
+    for item in chapters:
+        title = label(item)
+        if (re.search(CHAPTERS[slot], title, re.I) and not re.search(CHAPTERS[other], title, re.I)
+                and not re.search(r"\b(?:before|after|pre|post)[\s_-]*(?:op|ed|opening|ending)\b|(?:OP|ED)(?:後|前)", title, re.I)):
+            return item
+    pattern = r"intro(?:\s*\d+)?" if slot == "OP" else r"(?:end\s+credits|credits|outro)(?:\s*\d+)?"
+    alias = next((item for item in chapters if re.fullmatch(pattern, label(item), re.I)), None)
+    if slot == "OP" and len(chapters) >= 4:
+        second = chapters[1]
+        if (re.fullmatch(r"(?:(?:chapter|chap\.?|ch\.?|チャプター|第)?[\s._#-]*\d+(?:章)?|untitled)?", label(second), re.I)
+                and second[1] <= 600 and 60 <= second[2] - second[1] <= 120
+                and (not alias or alias[1] == 0 and abs(alias[2] - alias[1] - 90) > 5)):
+            return second
+    return alias
 
 
 def timestamp(text):
@@ -151,7 +173,7 @@ def main():
         ffmpeg = ffmpeg_binary()
         size = episode.stat().st_size
         stream, chapters, duration = inspect(ffmpeg, episode)
-        chapter = next((item for item in chapters if re.fullmatch(CHAPTERS[slot], item[0].strip(), re.I)), None)
+        chapter = find_chapter(chapters, slot)
         start = args.start if args.start is not None else chapter[1] if chapter else None
         if start is None and interactive:
             start = timestamp(input("No matching chapter. Enter the song's episode start: "))

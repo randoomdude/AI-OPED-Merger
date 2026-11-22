@@ -2,6 +2,8 @@ import { dialogueIntervals, dialogueOffset, overlapsDialogue, songGaps } from ".
 import { fetchCaptions, parseCaptions, suggestedWindow, lyricWindows, windowCaptions } from "./jimaku.js";
 import { shiftRows, songRows } from "./reuse.js";
 import { rubyMarkup } from "./furigana.js";
+import { findChapter } from "./chapters.js";
+import { animeNames, findAnime, findThemes, titleKey, titleWithoutYear } from "./themes.js";
 import { timestamp, clock, parseLrc, makeDraft, estimatePlainStart, fillMissingTimes,
     originalAss, validatedCues, mergedAss } from "./timing.js";
 import { readWhisperTiming, whisperDraft } from "./whisper.js";
@@ -13,7 +15,7 @@ const client = "AI-OPED-Merger/0.1.1 (https://github.com/randoomdude/AI-OPED-Mer
 const catalog = await fetch("./example-themes.json", { cache: "no-cache" })
     .then(response => response.json()).catch(() => null);
 const shows = Array.isArray(catalog) ? catalog : catalog ? [catalog] : [];
-const animeTitleCache = new Map();
+let themeRequest;
 let episode;
 let selectedTrack;
 let localDialogue = [];
@@ -81,41 +83,38 @@ function setPreview(file) {
     player.src = previewUrl;
 }
 
-function findChapter(chapters, name) {
-    const pattern = name === "OP"
-        ? /^(?:(?:op|opening(?: credits)?|intro)(?:\s*\d+)?|オープニング)$/i
-        : /^(?:(?:ed|ending(?: credits)?|credits|end credits)(?:\s*\d+)?|エンディング)$/i;
-    return chapters.find(chapter => pattern.test(chapter.title.trim()));
-}
-
-function titleKey(title) {
-    return title.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
-}
-
 function catalogShow(title) {
-    const key = titleKey(title);
-    return shows.find(entry => entry.aliases.some(alias => titleKey(alias) === key));
-}
-
-function titleWithoutYear(title) {
-    return title.normalize("NFKC").replace(/\s*\((?:19|20)\d{2}\)$/, "").trim();
+    for (const name of animeNames(title)) {
+        const key = titleKey(name);
+        const show = shows.find(entry => entry.aliases.some(alias => titleKey(alias) === key));
+        if (show) return show;
+    }
 }
 
 function showForSearch(state, query) {
     const known = catalogShow(query);
     if (known) return known;
-    const localShow = catalogShow(state.anime);
+    const localShow = episode?.themeShow || catalogShow(state.anime);
     const matchesSong = [state.song?.search_query, state.song?.title].includes(query);
-    const matchesUnqualifiedTitle = localShow?.aliases.some(alias =>
+    const matchesUnqualifiedTitle = query === state.anime || localShow?.aliases.some(alias =>
         titleKey(titleWithoutYear(alias)) === titleKey(query));
     return matchesSong || matchesUnqualifiedTitle ? localShow : null;
+}
+
+function themeKey(song) {
+    return JSON.stringify([song.title, song.artist]);
+}
+
+function selectedSong(state, show, name) {
+    const choices = show?.songs.filter(s => s.slot === name) || [];
+    return choices.find(s => themeKey(s) === state.themeKey) || (choices.length === 1 ? choices[0] : null);
 }
 
 function stateFor(name) {
     const chapter = findChapter(episode.chapters, name);
     const { anime } = episode;
-    const show = catalogShow(anime);
-    const song = show?.songs.find(item => item.slot === name) || null;
+    const show = episode.themeShow;
+    const song = selectedSong({}, show, name);
     return {
         chapter, anime, song, windowStart: clock(chapter?.start), windowEnd: "",
         query: song?.search_query || song?.title || anime, alternates: "", source: null, lines: [], rows: [],
@@ -182,7 +181,7 @@ function showSlot() {
     showWindowNote();
     $("query").value = state.query;
     $("alternates").value = state.alternates;
-    $("alternates").placeholder = catalogShow(state.anime)?.aliases.join("\n") || "One alternate title per line";
+    $("alternates").placeholder = episode.themeShow?.aliases.join("\n") || "One alternate title per line";
     $("alternate-titles").open = Boolean(state.alternates);
     $("source-url").value = state.source?.url || state.song?.sources.uta_net || "";
     $("paste").value = "";
@@ -196,12 +195,23 @@ function showSlot() {
 function showSourceLinks() {
     const state = slots[slot];
     const query = state.query.trim();
-    const song = showForSearch(state, query)?.songs.find(item => item.slot === slot) ?? state.song;
+    const show = showForSearch(state, query);
+    const song = selectedSong(state, show, slot);
+    const choices = episode.themeShow?.songs.filter(s => s.slot === slot) || [];
+    $("theme-choices").hidden = choices.length < 2;
+    if (choices.length > 1) {
+        $("theme-choice").replaceChildren(option("Choose the theme used in this episode", ""),
+            ...choices.map(s => option(slot + (s.number || "") + " · " + s.title + " · " + s.artist, themeKey(s))));
+        $("theme-choice").value = state.themeKey || "";
+    }
+    $("theme-status").textContent = episode.themeNote || (choices.length > 1 && !state.themeKey ? "Several themes are listed for this series."
+        : episode.themeShow && !choices.length ? "No " + slot + " song is listed for this series. You can search by song title." : "");
     $("song-title").textContent = song ? song.title + " · " + song.artist : "";
+    const searchTitle = song?.title || query;
     for (const [id, key, name, searchUrl] of [
-        ["uta-net", "uta_net", "Uta-Net", "https://www.uta-net.com/"],
-        ["uta-ten", "uta_ten", "UtaTen", query
-            ? "https://utaten.com/lyric/search?" + new URLSearchParams({ title: query })
+        ["uta-net", "uta_net", "Uta-Net", searchTitle ? "https://www.uta-net.com/search/?" + new URLSearchParams({ target: "title", type: "in", keyword: searchTitle }) : "https://www.uta-net.com/"],
+        ["uta-ten", "uta_ten", "UtaTen", searchTitle
+            ? "https://utaten.com/search?" + new URLSearchParams({ title: searchTitle, sort: "popular_sort_asc" })
             : "https://utaten.com/search"],
     ]) {
         const link = $(id);
@@ -214,6 +224,56 @@ function showSourceLinks() {
         };
     }
 }
+
+$("theme-choice").onchange = () => {
+    const state = slots[slot];
+    state.themeKey = $("theme-choice").value;
+    state.song = selectedSong(state, episode.themeShow, slot);
+    state.query = $("query").value = state.song?.search_query || state.song?.title || episode.themeShow.aliases[0];
+    showSourceLinks();
+};
+
+async function resolveEpisodeThemes(terms) {
+    themeRequest?.abort();
+    themeRequest = new AbortController();
+    const { signal } = themeRequest;
+    const opened = episode;
+    opened.themeNote = "Looking up opening and ending songs…";
+    showSourceLinks();
+    try {
+        let show, matchedTitle;
+        for (const term of uniqueTitles(terms)) {
+            matchedTitle = term;
+            show = catalogShow(term);
+            if (show) break;
+            const media = await findAnime(term, signal);
+            if (!media) continue;
+            show = shows.find(entry => media.aliases.some(alias => entry.aliases.some(a => titleKey(a) === titleKey(alias))));
+            if (show) break;
+            const songs = await findThemes(media, signal);
+            if (songs.length) { show = { aliases: media.aliases, songs }; break; }
+        }
+        if (episode !== opened || signal.aborted) return;
+        if (show) {
+            opened.themeShow = show;
+            for (const name of ["OP", "ED"]) {
+                const state = slots[name];
+                const replaceQuery = !state.query || state.query === opened.anime || state.query === state.song?.search_query ||
+                    state.query === state.song?.title || state.query === matchedTitle || show.aliases.some(a => titleKey(a) === titleKey(state.query));
+                if (state.themeKey && !show.songs.some(s => s.slot === name && themeKey(s) === state.themeKey)) state.themeKey = "";
+                state.song = selectedSong(state, show, name);
+                if (replaceQuery) state.query = state.song?.search_query || state.song?.title || show.aliases[0];
+            }
+            $("query").value = slots[slot].query;
+            $("alternates").placeholder = show.aliases.join("\n");
+            opened.themeNote = "";
+        } else opened.themeNote = "No matching themes found. Try an alternate anime title, or enter a song title to search the lyric sites.";
+    } catch {
+        if (!signal.aborted) opened.themeNote = "The theme database could not be reached. Retry Find OP/ED songs or enter the song title.";
+    }
+    if (episode === opened && !signal.aborted) showSourceLinks();
+}
+$("find-themes").onclick = () => resolveEpisodeThemes([slots[slot].query, ...alternateTitles(slots[slot]), episode.anime]);
 
 const nativeView = window.chrome?.webview;
 let desktop = false;
@@ -253,6 +313,7 @@ function loadEpisode(file) {
     const desktopId = desktop ? crypto.randomUUID() : null;
     if (desktopId) nativeView.postMessageWithAdditionalObjects({ action: "episode", id: desktopId }, [file]);
     worker?.terminate();
+    themeRequest?.abort();
     sourceRequest?.abort();
     jimakuRequest?.abort();
     clearCaptionPreview();
@@ -282,6 +343,7 @@ function loadEpisode(file) {
         const match = filename.match(/^(.+?)(?:\s+-\s+(\d+(?:\.\d+)?)(?:v\d+)?(?=\s|\[|\(|$)|[ ._-]+S\d+E(\d+)\b)/i);
         const number = Number(match?.[2] ?? match?.[3]);
         episode = { ...data, file, desktopId, number, anime: match?.[1] || filename };
+        episode.themeShow = catalogShow(episode.anime);
         $("jimaku-title").value = episode.anime;
         $("jimaku-episode").value = Number.isInteger(number) ? String(number) : "";
         $("jimaku-status").textContent = "";
@@ -307,6 +369,7 @@ function loadEpisode(file) {
         $("track-options").hidden = false;
         setPreview(file);
         showSlot();
+        if (!episode.themeShow) resolveEpisodeThemes([episode.anime]);
         status(english.length === 1 || defaults.length === 1
             ? "Episode ready. Choose the song and find its lyrics."
             : "Episode ready. Check which subtitle track you want to merge.");
@@ -450,35 +513,6 @@ async function lrclib(path, signal) {
     }
 }
 
-async function animeTitles(query, signal) {
-    const title = titleWithoutYear(query);
-    const year = Number(query.normalize("NFKC").match(/\((\d{4})\)$/)?.[1]);
-    const key = titleKey(query);
-    if (animeTitleCache.has(key)) return animeTitleCache.get(key);
-    try {
-        const response = await fetch("https://graphql.anilist.co", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                query: "query($title:String){Page(perPage:8){media(type:ANIME,search:$title){seasonYear title{english romaji native} synonyms}}}",
-                variables: { title },
-            }),
-            signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
-        });
-        if (!response.ok) return [];
-        const { data } = await response.json();
-        if (!Array.isArray(data?.Page?.media)) return [];
-        const matches = data.Page.media.filter(media =>
-            (!year || media.seasonYear === year) && [...Object.values(media.title), ...media.synonyms].some(name =>
-                name && titleKey(titleWithoutYear(name)) === titleKey(title)));
-        const titles = matches.length === 1 ? Object.values(matches[0].title).filter(Boolean) : [];
-        animeTitleCache.set(key, titles);
-        return titles;
-    } catch {
-        signal.throwIfAborted();
-        return [];
-    }
-}
-
 async function searchLyrics(variants, signal) {
     const queries = new Set(variants.map(params => new URLSearchParams(params).toString()));
     const records = new Map();
@@ -581,6 +615,16 @@ function showWindowNote() {
     const state = slots[slot];
     const options = $("gap-options");
     options.replaceChildren();
+    if (state.chapter && (timestamp(state.windowStart) !== timestamp(clock(state.chapter.start)) || state.windowEnd)) {
+        const restore = text("button", "Use " + slot + " chapter at " + clock(state.chapter.start));
+        restore.onclick = () => {
+            state.windowStart = clock(state.chapter.start);
+            state.windowEnd = state.windowOrigin = "";
+            syncWindowFields();
+            renderCaptionPreview();
+        };
+        options.append(restore);
+    }
     const gaps = trackGaps[slot];
     if (!state.chapter && gaps.length && (gaps.length > 1 || state.windowOrigin !== "a gap in MKV dialogue")) {
         const label = text("label", "Possible " + slot + " gaps in the selected MKV dialogue track");
@@ -599,6 +643,7 @@ function showWindowNote() {
     $("chapter-note").textContent = state.windowOrigin === "a gap in MKV dialogue"
         ? "Estimated from a gap longer than 1:30 in the selected MKV dialogue track. Check Jimaku to refine the timing."
         : state.windowOrigin && state.windowOrigin !== "manual" ? "Song window from " + state.windowOrigin + "."
+        : state.chapter?.inferred && state.windowStart === clock(state.chapter.start) ? "Estimated opening from the second MKV chapter. Check the start against the audio."
         : state.chapter && state.windowStart === clock(state.chapter.start) ? "Song start from the MKV chapter named " + state.chapter.title + "."
         : state.windowStart ? "Song start set to " + state.windowStart + "." : "Set the song start or check an episode subtitle file on Jimaku.";
 }
@@ -695,7 +740,7 @@ function renderCaptionPreview() {
     const suggestion = suggestedWindow(file.cues, slot, episode.duration, offset);
     const lyrics = suggestion ? [] : lyricWindows(cues, slot, episode.duration);
     const chapterStart = state.chapter && timestamp(state.windowStart) === timestamp(clock(state.chapter.start));
-    const windows = chapterStart ? [] : suggestion ? [suggestion] : lyrics;
+    const windows = chapterStart && !state.chapter.inferred ? [] : suggestion ? [suggestion] : lyrics;
     for (const candidate of windows) {
         const origin = suggestion ? "Jimaku music markers" : "Jimaku lyric lines";
         if (state.windowOrigin === origin && state.windowFile === file.url && range && range.start === candidate.start && range.end === candidate.end) continue;
@@ -919,7 +964,7 @@ $("search").onclick = async () => {
     const alternates = alternateTitles(searching);
     if (!query && !alternates.length) return status("Enter a song, artist, or anime title.", true);
     const show = showForSearch(searching, query);
-    const song = show?.songs.find(item => item.slot === slot);
+    const song = selectedSong(searching, show, slot);
     const signal = beginSourceRequest();
     $("search-status").textContent = "Searching LRCLIB…";
     $("results").replaceChildren();
@@ -936,8 +981,12 @@ $("search").onclick = async () => {
                     songTitles.some(title => titleKey(record.trackName).startsWith(titleKey(title))) && artists.includes(titleKey(record.artistName)));
             }
         } else {
-            const titles = show?.aliases ?? (query ? await animeTitles(query, signal) : []);
-            const queries = uniqueTitles([song?.search_query || query, ...alternates, ...titles.map(titleWithoutYear)]);
+            let titles = show?.aliases;
+            if (!titles && query) {
+                try { titles = (await findAnime(query, signal))?.aliases.slice(0, 3); }
+                catch { signal.throwIfAborted(); }
+            }
+            const queries = uniqueTitles([song?.search_query || query, ...alternates, ...(titles || []).map(titleWithoutYear)]);
             rows = await searchLyrics(queries.map(q => ({ q })), signal);
         }
         if (signal.aborted || slots[slot] !== searching) return;
@@ -1512,6 +1561,10 @@ $("restore").onchange = async event => {
             const base = stateFor(name);
             for (const key of ["query", "alternates", "windowStart", "windowEnd", "firstEpisode", "secondEpisode", "beforeCutEnd"]) {
                 if (typeof song[key] === "string") base[key] = song[key];
+            }
+            if (typeof song.themeKey === "string") {
+                base.themeKey = song.themeKey;
+                base.song = selectedSong(base, episode.themeShow, name);
             }
             if (song.secondMode === "shift") base.secondMode = "shift";
             if (["Jimaku music markers", "Jimaku lyric lines", "a gap in MKV dialogue", "manual"].includes(song.windowOrigin)) {

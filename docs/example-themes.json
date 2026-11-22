@@ -122,5 +122,26 @@
       "sources": { "uta_ten": "https://utaten.com/lyric/mi26091845/" }
     }
   ]
+},
+{
+  "aliases": ["Toaru Anbu no ITEM", "A Certain Underground ITEM", "A Certain Dark Item", "A Certain Dark Side's Item", "とある暗部の少女共棲"],
+  "metadata_source": "https://toaru-project.com/item/music/index.html",
+  "songs": [
+    {
+      "slot": "OP",
+      "title": "Ghost Sequence",
+      "artist": "East Of Eden",
+      "lrclib_search": { "track_name": "Ghost Sequence", "artist_name": "East Of Eden" },
+      "sources": { "uta_net": "https://www.uta-net.com/song/400647/", "uta_ten": "https://utaten.com/lyric/mi26100762/" }
+    },
+    {
+      "slot": "ED",
+      "title": "原子崩し",
+      "artist": "岸田教団＆THE明星ロケッツ",
+      "lrclib_search": { "track_name": "原子崩し", "artist_name": "岸田教団＆THE明星ロケッツ" },
+      "lrclib_alternates": [{ "track_name": "Meltdowner", "artist_name": "KISIDA KYODAN & THE AKEBOSI ROCKETS" }],
+      "sources": { "uta_net": "https://www.uta-net.com/song/400649/", "uta_ten": "https://utaten.com/lyric/mi26100763/" }
+    }
+  ]
 }
 ]
