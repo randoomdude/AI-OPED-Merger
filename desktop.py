@@ -1,5 +1,6 @@
 """Windows desktop host for AI OP/ED Merger. Run with Python 3.11."""
 import ctypes
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -8,13 +9,40 @@ import shutil
 import subprocess
 import sys
 import winreg
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, gettempdir
 from threading import Lock, Thread
 from urllib.parse import urldefrag
 
 import webview
 
 DOCS = Path(__file__).resolve().parent / "docs"
+PREVIEW_CACHE = Path(gettempdir()) / "AI OP-ED Merger" / "previews-v1"
+
+
+def preview_cache_path(source):
+    info = source.stat()
+    identity = json.dumps([os.path.normcase(str(source.resolve())), info.st_size, info.st_mtime_ns])
+    return PREVIEW_CACHE / (hashlib.sha256(identity.encode()).hexdigest() + ".mp4")
+
+
+def remember_preview(output, cached):
+    # Linking a finished file publishes it atomically. Playback also works without a cache.
+    try:
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        if not cached.exists():
+            os.link(output, cached)
+        os.utime(cached)
+        entries = (p for p in cached.parent.glob("*.mp4") if re.fullmatch(r"[0-9a-f]{64}", p.stem))
+        count = size = 0
+        for entry in sorted(entries, key=lambda p: p.stat().st_mtime_ns, reverse=True):
+            length = entry.stat().st_size
+            if count >= 2 or size + length > 512 * 1024**2:
+                entry.unlink(missing_ok=True)
+            else:
+                count += 1
+                size += length
+    except OSError:
+        pass
 
 
 def whisper_python():
@@ -44,20 +72,29 @@ class Desktop:
     def prepare_preview(self, token):
         source = self._episode(token)
         ffmpeg = shutil.which("ffmpeg") or "C:/ffmpeg/bin/ffmpeg.exe"
-        if not Path(ffmpeg).is_file():
-            raise ValueError("Install FFmpeg to prepare a compatible video preview.")
         with self._preview_lock:
+            runner = self._preview_runner
             self._episode(token)
             output = self._preview_folder / (token + ".mp4")
+            cached = preview_cache_path(source)
             if not output.exists():
                 try:
-                    self._preview_runner._run([ffmpeg, "-nostdin", "-v", "error", "-i", str(source),
+                    os.link(cached, output)
+                except OSError:
+                    pass
+            if not output.exists():
+                if not Path(ffmpeg).is_file():
+                    raise ValueError("Install FFmpeg to prepare a compatible video preview.")
+                try:
+                    runner._run([ffmpeg, "-nostdin", "-v", "error", "-i", str(source),
                         "-map", "0:v:0", "-map", "0:a:0?", "-vf", "scale=-2:480,format=yuv420p",
                         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-c:a", "aac",
                         "-movflags", "+faststart", str(output)])
+                    self._episode(token)
                 except Exception:
                     output.unlink(missing_ok=True)
                     raise
+            remember_preview(output, cached)
             return self._preview_folder.name + "/" + output.name
 
     def _attach(self, window):

@@ -45,13 +45,38 @@ function option(label, value) {
     return node;
 }
 
+const toolTabs = Array.from(document.querySelectorAll(".tool-tabs [role=tab]"));
+function openPanel(id, focus = false) {
+    for (const tab of toolTabs) {
+        const panel = $(tab.getAttribute("aria-controls"));
+        const active = panel.id === id;
+        panel.hidden = !active;
+        tab.setAttribute("aria-selected", String(active));
+        tab.tabIndex = active ? 0 : -1;
+        if (active && focus) tab.focus();
+    }
+}
+for (const [index, tab] of toolTabs.entries()) {
+    tab.onclick = () => openPanel(tab.getAttribute("aria-controls"));
+    tab.onkeydown = event => {
+        const destinations = {ArrowLeft: index - 1, ArrowRight: index + 1, Home: 0, End: toolTabs.length - 1};
+        if (!Object.hasOwn(destinations, event.key)) return;
+        event.preventDefault();
+        const next = toolTabs[(destinations[event.key] + toolTabs.length) % toolTabs.length];
+        openPanel(next.getAttribute("aria-controls"), true);
+    };
+}
+
 let needsPreviewCheck = false;
+let compatiblePreviewUrl;
 function setPreview(file) {
     needsPreviewCheck = desktop && file === episode?.file;
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     const input = /\.mkv$/i.test(file.name) ? file.slice(0, file.size, "video/x-matroska") : file;
     previewUrl = URL.createObjectURL(input);
     $("playback-note").textContent = "";
+    compatiblePreviewUrl = null;
+    player.preload = "metadata";
     pendingSeek = null;
     player.src = previewUrl;
 }
@@ -221,6 +246,10 @@ function desktopJob(action, ...args) {
 }
 
 function loadEpisode(file) {
+    document.querySelector("main").classList.remove("editing");
+    $("episode-settings").open = true;
+    $("episode-caption").textContent = "";
+    openPanel("sources");
     const desktopId = desktop ? crypto.randomUUID() : null;
     if (desktopId) nativeView.postMessageWithAdditionalObjects({ action: "episode", id: desktopId }, [file]);
     worker?.terminate();
@@ -272,6 +301,9 @@ function loadEpisode(file) {
         trackChanged();
         slot = $("slot").value = "OP";
         $("project").hidden = false;
+        $("episode-caption").textContent = file.name;
+        $("episode-settings").open = false;
+        document.querySelector("main").classList.add("editing");
         $("track-options").hidden = false;
         setPreview(file);
         showSlot();
@@ -302,24 +334,34 @@ async function prepareCompatiblePreview() {
     const opened = episode;
     const original = previewUrl;
     const note = $("playback-note");
-    note.textContent = "Preparing a compatible video preview on this PC…";
+    note.textContent = "Preparing the video preview. The first conversion can take a few minutes.";
     try {
         const url = await desktopJob("prepare_preview", opened.desktopId);
         if (episode !== opened || previewUrl !== original) return;
         pendingSeek = pendingSeek ?? player.currentTime * 1000;
-        player.src = url;
-        note.textContent = "Compatible video preview ready.";
+        const wasPlaying = !player.paused && !player.ended;
+        compatiblePreviewUrl = new URL(url, document.baseURI).href;
+        note.textContent = "Loading the video preview…";
+        player.preload = "auto";
+        player.src = compatiblePreviewUrl;
+        if (wasPlaying) player.play().catch(() => {});
     } catch (error) {
         if (episode === opened && previewUrl === original) note.textContent = error.message;
     }
 }
+function previewDurationDiffers() {
+    return episode?.duration && Number.isFinite(player.duration) && Math.abs(player.duration * 1000 - episode.duration) > 1500;
+}
 player.addEventListener("loadeddata", () => {
     if (!player.videoWidth) prepareCompatiblePreview();
+    else if (player.currentSrc === compatiblePreviewUrl && !previewDurationDiffers()) {
+        $("playback-note").textContent = "Compatible video preview ready.";
+    }
 });
 player.addEventListener("loadedmetadata", () => {
     if (!player.videoWidth) prepareCompatiblePreview();
     if (Number.isFinite(pendingSeek)) seek(pendingSeek);
-    if (episode?.duration && Number.isFinite(player.duration) && Math.abs(player.duration * 1000 - episode.duration) > 1500) {
+    if (previewDurationDiffers()) {
         $("playback-note").textContent = "The preview duration differs from the MKV. Check that their timelines match.";
     }
 });
@@ -867,6 +909,7 @@ function setSource(source) {
     state.secondMode = "drift";
     state.beforeCutEnd = "";
     showTiming();
+    openPanel("timing");
     return true;
 }
 
@@ -1072,9 +1115,8 @@ $("run-whisper").onclick = async () => {
 };
 
 $("jimaku-whisper").onclick = () => {
-    $("audio-options").open = true;
+    openPanel("audio-options", true);
     if (desktop) $("run-whisper").click();
-    else $("audio-options").scrollIntoView({ block: "center" });
 };
 
 async function applyWhisper(read) {
@@ -1082,12 +1124,46 @@ async function applyWhisper(read) {
     const selected = slot;
     const state = slots[selected];
     const source = state.source;
-    const snapshot = JSON.stringify(state);
+    const songName = selected === "OP" ? "opening" : "ending";
+    const start = state.windowStart, end = state.windowEnd;
+    const originalRows = state.rows.map(({text, start, end, include}) => ({text, start, end, include}));
+    function changedSinceReview() {
+        if (episode !== opened || slot !== selected || slots[selected] !== state) return "The episode or song selection changed.";
+        if (start !== state.windowStart || end !== state.windowEnd) return "The " + songName + " time window changed.";
+        if (source !== state.source) return "The lyrics source for the " + songName + " changed.";
+        if (originalRows.length !== state.rows.length) return "The " + songName + " draft now has " + state.rows.length + " lines.";
+        for (const [index, row] of originalRows.entries()) {
+            for (const field of Object.keys(row)) {
+                if (row[field] !== state.rows[index][field]) {
+                    const label = field === "include" ? "export checkbox" : field;
+                    return "The " + label + " changed on line " + (index + 1) + " of the " + songName + " draft.";
+                }
+            }
+        }
+        return "";
+    }
     try {
         const input = await read();
-        if (episode !== opened || slot !== selected || slots[selected] !== state || JSON.stringify(state) !== snapshot) {
-            return status("The episode, song, or draft changed while Whisper timing was loading. Run it again for the current selection.");
+        function reviewIsStale() {
+            const reason = changedSinceReview();
+            if (!reason) return false;
+            if (episode === opened && selected === slot && slots[selected] === state) {
+                const review = $("whisper-review");
+                review.replaceChildren(text("p", reason));
+                if (start === state.windowStart && end === state.windowEnd) {
+                    const compare = text("button", "Compare this audio with the current draft");
+                    compare.onclick = () => {
+                        if (episode === opened && slot === selected && start === state.windowStart && end === state.windowEnd)
+                            applyWhisper(() => input);
+                        else status("Run Whisper for the current song window.", true);
+                    };
+                    review.append(compare);
+                }
+            }
+            status(reason + " Review the current song before applying timing.", true);
+            return true;
         }
+        if (reviewIsStale()) return;
         const data = readWhisperTiming(input, opened.file, selected, opened.duration);
         if (!state.rows.length && state.lines.length) {
             throw Error("Build the timing draft from your timed lyrics first, then compare it with Whisper.");
@@ -1159,10 +1235,7 @@ async function applyWhisper(read) {
         function offer(label, action) {
             const button = text("button", label);
             button.onclick = () => {
-                if (slots[slot] !== state || JSON.stringify(state) !== snapshot) {
-                    review.replaceChildren();
-                    return status("The draft changed. Compare the timing again.", true);
-                }
+                if (reviewIsStale()) return;
                 try { action(); } catch (error) { status(error.message, true); }
             };
             actions.append(button);
@@ -1187,6 +1260,7 @@ async function applyWhisper(read) {
             syncWindowFields();
             review.replaceChildren();
             showTiming();
+            openPanel("timing");
             status("Applied the selected Whisper changes.");
         }
         const offsets = changes.filter(({before}) => Number.isFinite(timestamp(before.start)))
@@ -1199,7 +1273,8 @@ async function applyWhisper(read) {
         offer(reference.length ? "Replace lyrics with Whisper transcription…" : "Use Whisper transcription", () =>
             apply(whisperDraft(data, []).rows, true));
         review.append(actions);
-        status("Whisper comparison ready. Your draft is unchanged.");
+        status(reference.length ? "Whisper comparison ready. Review the proposed times for the " + songName + "."
+            : "Whisper found transcript lines. Choose Use Whisper transcription to create the " + songName + " draft.");
     } catch (error) {
         status(error instanceof SyntaxError ? "Choose a valid timing JSON file from the Whisper helper." : error.message, true);
     }
@@ -1207,14 +1282,18 @@ async function applyWhisper(read) {
 
 function showTiming() {
     const state = slots[slot];
-    $("timing").hidden = !state.source;
+    const name = slot === "OP" ? "Opening" : "Ending";
+    $("draft-title").textContent = name + " draft · Line timing";
+    $("draft-empty").hidden = state.rows.length > 0;
+    $("draft-empty").textContent = state.source ? "Lyrics selected. Build a timing draft to edit individual lines."
+        : "No lyric lines yet. Import lyrics from Source lyrics or choose Use Whisper transcription after an audio review.";
     $("source-status").textContent = state.source ? (state.source.title || state.source.provider)
         + " · " + (state.source.whisper ? "Timing from episode audio"
             : state.source.provider === "Jimaku" ? "Episode subtitle timing" : state.lines.length ? state.lines.length + " timed source lines" : "Manual timing") : "";
     const timed = Boolean(state.lines.length);
     $("anchors").hidden = !timed;
-    $("plain-hint").hidden = timed || state.source?.whisper === true || state.source?.provider === "Jimaku";
-    $("draft").hidden = ["Local Whisper", "Jimaku", "Previous episode"].includes(state.source?.provider);
+    $("plain-hint").hidden = !state.source || timed || state.source.whisper === true || state.source.provider === "Jimaku";
+    $("draft").hidden = !state.source || ["Local Whisper", "Jimaku", "Previous episode"].includes(state.source.provider);
     if (timed) {
         for (const key of ["first", "last", "second"]) {
             $(key).replaceChildren(...state.lines.map((line, index) =>
@@ -1235,6 +1314,7 @@ function showTiming() {
 function showRows() {
     const state = slots[slot];
     const rows = state.rows;
+    $("tab-timing").textContent = "Draft (" + rows.length + ")";
     $("fill-times").hidden = !rows.length || Boolean(state.lines.length);
     $("cue-list").replaceChildren();
     rows.forEach((row, index) => {
@@ -1459,6 +1539,7 @@ $("restore").onchange = async event => {
         $("track").value = saved.track;
         trackChanged();
         showSlot();
+        openPanel("timing");
         status("Saved project reopened.");
     } catch (error) {
         status(error instanceof SyntaxError || error instanceof TypeError ? "Choose a valid project ZIP from this app." : error.message, true);

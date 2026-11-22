@@ -16,8 +16,8 @@
     <p id="intro">Time opening and ending lyrics against a local episode and export one ASS subtitle file.</p>
   </header>
   <p id="status" class="status" role="status" aria-live="polite"></p>
-  <section class="panel">
-    <h2>Episode</h2>
+  <details class="panel" id="episode-settings" open>
+    <summary>Episode <span id="episode-caption"></span></summary>
     <label for="episode">Downloaded MKV</label>
     <input id="episode" type="file" accept=".mkv,video/x-matroska">
     <p id="filename" class="muted">Your browser reads the episode from your device.</p>
@@ -27,19 +27,14 @@
       <select id="track"></select>
       <p id="track-summary" class="muted"></p>
     </div>
-  </section>
+  </details>
   <div id="project" hidden>
-    <section class="panel">
+    <section class="panel preview-pane">
       <div class="heading-row">
-        <div><h2>Song and episode window</h2><p id="chapter-note" class="muted"></p></div>
+        <h2>Episode preview</h2>
         <label>Song<select id="slot"><option value="OP">Opening</option><option value="ED">Ending</option></select></label>
       </div>
-      <div class="grid">
-        <label>Episode start<input id="window-start" placeholder="0:01:09.00"></label>
-        <label>Episode end (optional)<input id="window-end"></label>
-      </div>
-      <div id="gap-options"></div>
-      <p class="muted">Timed drafts stop 1:34 after the start, or sooner if the chapter or episode ends. Enter an episode end to change it.</p>
+      <p id="playback-note" class="muted" role="status"></p>
       <video id="player" controls preload="metadata" playsinline></video>
       <div class="row player-controls">
         <button id="jump" type="button">Go to song start</button>
@@ -47,118 +42,133 @@
         <button id="forward" type="button">Forward 2 seconds</button>
         <output id="playhead">0:00:00.00</output>
       </div>
-      <p id="playback-note" class="muted"></p>
+      <p id="chapter-note" class="muted"></p>
+      <div class="grid">
+        <label>Episode start<input id="window-start" placeholder="0:01:09.00"></label>
+        <label>Episode end (optional)<input id="window-end"></label>
+      </div>
+      <div id="gap-options"></div>
+      <p class="muted">Timed drafts stop 1:34 after the start, or sooner if the chapter or episode ends. Enter an episode end to change it.</p>
       <details>
         <summary>Use a different preview file</summary>
         <p class="muted">Choose an audio or video copy with the same episode start and duration.</p>
         <input id="preview" type="file" accept="video/*,audio/*,.mkv,.m4a,.wav" aria-label="Same episode preview file">
       </details>
     </section>
-    <section class="panel">
-      <h2>Source lyrics</h2>
-      <p id="song-title" class="muted"></p>
-      <div class="row">
-        <label class="fill">Song, artist, or anime title<input id="query" type="search"></label>
-        <button id="search" type="button">Search LRCLIB</button>
+    <div class="toolbox">
+      <div class="tool-tabs" role="tablist" aria-label="Subtitle editor">
+        <button type="button" id="tab-sources" role="tab" aria-controls="sources" aria-selected="true">Sources</button>
+        <button type="button" id="tab-audio" role="tab" aria-controls="audio-options" aria-selected="false" tabindex="-1">Whisper</button>
+        <button type="button" id="tab-timing" role="tab" aria-controls="timing" aria-selected="false" tabindex="-1">Draft</button>
+        <button type="button" id="tab-export" role="tab" aria-controls="export-panel" aria-selected="false" tabindex="-1">Export</button>
       </div>
-      <details id="alternate-titles">
-        <summary>Alternate search titles</summary>
-        <label>English, Japanese, or romaji, one per line<textarea id="alternates" rows="3"></textarea></label>
-      </details>
-      <p id="search-status" role="status" class="muted"></p>
-      <div id="results"></div>
-      <p class="muted">Other lyrics sources ·
-        <a id="uta-net" href="https://www.uta-net.com/" target="_blank" rel="noopener noreferrer">Uta-Net</a> ·
-        <a id="uta-ten" href="https://utaten.com/search" target="_blank" rel="noopener noreferrer">UtaTen</a>
-      </p>
-      <details>
-        <summary>Jimaku episode subtitles</summary>
-        <div class="grid">
-          <label>Anime title<input id="jimaku-title" type="search"></label>
-          <label>Episode number<input id="jimaku-episode" type="number" min="0" step="1" placeholder="All episodes"></label>
-          <label>Jimaku API key<input id="jimaku-key" type="password" autocomplete="off" spellcheck="false"></label>
-          <p class="muted">An API key lists files here. You can also browse Jimaku directly. <a href="https://jimaku.cc/account" target="_blank" rel="noopener noreferrer">Jimaku account</a></p>
-        </div>
+      <section class="panel" id="sources" role="tabpanel" aria-labelledby="tab-sources">
+        <h2>Source lyrics</h2>
+        <p id="song-title" class="muted"></p>
         <div class="row">
-          <button id="jimaku-search" type="button">Search Jimaku</button>
-          <a id="jimaku-public" href="https://jimaku.cc/" target="_blank" rel="noopener noreferrer">Browse on Jimaku</a>
+          <label class="fill">Song, artist, or anime title<input id="query" type="search"></label>
+          <button id="search" type="button">Search LRCLIB</button>
         </div>
-        <p id="jimaku-status" role="status" class="muted"></p>
-        <div id="jimaku-results"></div>
-        <div id="jimaku-preview" aria-live="polite"></div>
-        <button id="jimaku-whisper" type="button">Use Whisper timing</button>
-      </details>
-      <details id="paste-lyrics">
-        <summary>Paste lyrics or LRC</summary>
-        <label>Source URL (optional)<input id="source-url" type="url" placeholder="https://…"></label>
-        <label>Original lyrics or LRC<textarea id="paste" rows="6"></textarea></label>
-        <p class="muted">For furigana, type 剣《つるぎ》 or paste text with HTML ruby readings.</p>
-        <button id="use-paste" type="button">Use pasted lyrics</button>
-      </details>
-      <details id="reuse-panel">
-        <summary>Reuse a timed opening or ending</summary>
-        <label>Previous episode subtitles<input id="reuse-file" type="file" accept=".ass,.mkv"></label>
-        <div id="reuse-review"></div>
-      </details>
-      <details id="audio-options" open>
-        <summary>Time from episode audio with Whisper</summary>
-        <label id="hint-label" hidden>Spelling hints for local Whisper (optional)<input id="whisper-hint" maxlength="160" placeholder="A name or short phrase you hear"></label>
-        <button id="run-whisper" type="button" hidden>Time with local Whisper</button>
-        <p id="whisper-progress" class="muted" role="status" hidden></p>
-        <p id="helper-instructions" class="muted">Run the <a href="./whisper-helper.py" download>Whisper helper</a> with Python, select this MKV, and choose OP or ED. Apply pasted lyrics first if you want to keep their wording.</p>
-        <label>Import Whisper timing<input id="import-whisper" type="file" accept=".json,application/json"></label>
-        <div id="whisper-review"></div>
-      </details>
-      <p id="source-status" class="muted" role="status"></p>
-    </section>
-    <section id="timing" class="panel" hidden>
-      <h2>Line timing</h2>
-      <div id="anchors" hidden>
-        <p class="muted">The draft places the source timestamps relative to the song start. Enter the time you hear the first line to adjust the alignment.</p>
-        <div class="grid">
-          <label>First line heard<select id="first"></select></label>
-          <label>Last line heard<select id="last"></select></label>
-          <label>First line in episode (optional)<input id="first-episode"></label>
-          <div><button type="button" data-capture="first-episode">Use playhead for first line</button></div>
-          <label>Second anchor line<select id="second"></select></label>
-        </div>
-        <div id="second-options" hidden>
+        <details id="alternate-titles">
+          <summary>Alternate search titles</summary>
+          <label>English, Japanese, or romaji, one per line<textarea id="alternates" rows="3"></textarea></label>
+        </details>
+        <p id="search-status" role="status" class="muted"></p>
+        <div id="results"></div>
+        <p class="muted">Other lyrics sources ·
+          <a id="uta-net" href="https://www.uta-net.com/" target="_blank" rel="noopener noreferrer">Uta-Net</a> ·
+          <a id="uta-ten" href="https://utaten.com/search" target="_blank" rel="noopener noreferrer">UtaTen</a>
+        </p>
+        <details>
+          <summary>Jimaku episode subtitles</summary>
           <div class="grid">
-            <label>How to apply the second anchor<select id="second-mode"><option value="drift">Correct steady drift</option><option value="shift">Shift from this line</option></select></label>
-            <label>Second line in episode<input id="second-episode" placeholder="0:02:01.40"></label>
-            <div><button type="button" data-capture="second-episode">Use playhead for second line</button></div>
+            <label>Anime title<input id="jimaku-title" type="search"></label>
+            <label>Episode number<input id="jimaku-episode" type="number" min="0" step="1" placeholder="All episodes"></label>
+            <label>Jimaku API key<input id="jimaku-key" type="password" autocomplete="off" spellcheck="false"></label>
+            <p class="muted">An API key lists files here. You can also browse Jimaku directly. <a href="https://jimaku.cc/account" target="_blank" rel="noopener noreferrer">Jimaku account</a></p>
           </div>
-          <div id="cut-options" hidden>
-            <p class="muted">Use a shift when the timing jumps at an edit. If there’s a pause before the shifted line, set when the previous subtitle should disappear.</p>
+          <div class="row">
+            <button id="jimaku-search" type="button">Search Jimaku</button>
+            <a id="jimaku-public" href="https://jimaku.cc/" target="_blank" rel="noopener noreferrer">Browse on Jimaku</a>
+          </div>
+          <p id="jimaku-status" role="status" class="muted"></p>
+          <div id="jimaku-results"></div>
+          <div id="jimaku-preview" aria-live="polite"></div>
+          <button id="jimaku-whisper" type="button">Use Whisper timing</button>
+        </details>
+        <details id="paste-lyrics">
+          <summary>Paste lyrics or LRC</summary>
+          <label>Source URL (optional)<input id="source-url" type="url" placeholder="https://…"></label>
+          <label>Original lyrics or LRC<textarea id="paste" rows="6"></textarea></label>
+          <p class="muted">For furigana, type 剣《つるぎ》 or paste text with HTML ruby readings.</p>
+          <button id="use-paste" type="button">Use pasted lyrics</button>
+        </details>
+        <details id="reuse-panel">
+          <summary>Reuse a timed opening or ending</summary>
+          <label>Previous episode subtitles<input id="reuse-file" type="file" accept=".ass,.mkv"></label>
+          <div id="reuse-review"></div>
+        </details>
+        <p id="source-status" class="muted" role="status"></p>
+      </section>
+      <section id="audio-options" class="panel" role="tabpanel" aria-labelledby="tab-audio" hidden>
+          <h2>Time from episode audio</h2>
+          <label id="hint-label" hidden>Spelling hints for local Whisper (optional)<input id="whisper-hint" maxlength="160" placeholder="A name or short phrase you hear"></label>
+          <button id="run-whisper" type="button" hidden>Time with local Whisper</button>
+          <p id="whisper-progress" class="muted" role="status" hidden></p>
+          <p id="helper-instructions" class="muted">Run the <a href="./whisper-helper.py" download>Whisper helper</a> with Python, select this MKV, and choose OP or ED. Apply pasted lyrics first if you want to keep their wording.</p>
+          <label>Import Whisper timing<input id="import-whisper" type="file" accept=".json,application/json"></label>
+          <div id="whisper-review"></div>
+      </section>
+      <section id="timing" class="panel" role="tabpanel" aria-labelledby="tab-timing" hidden>
+        <h2 id="draft-title">Line timing</h2>
+        <p id="draft-empty" class="muted"></p>
+        <div id="anchors" hidden>
+          <p class="muted">The draft places the source timestamps relative to the song start. Enter the time you hear the first line to adjust the alignment.</p>
+          <div class="grid">
+            <label>First line heard<select id="first"></select></label>
+            <label>Last line heard<select id="last"></select></label>
+            <label>First line in episode (optional)<input id="first-episode"></label>
+            <div><button type="button" data-capture="first-episode">Use playhead for first line</button></div>
+            <label>Second anchor line<select id="second"></select></label>
+          </div>
+          <div id="second-options" hidden>
             <div class="grid">
-              <label>Previous line ends (optional)<input id="before-cut-end"></label>
-              <div><button type="button" data-capture="before-cut-end">Use playhead for previous line end</button></div>
+              <label>How to apply the second anchor<select id="second-mode"><option value="drift">Correct steady drift</option><option value="shift">Shift from this line</option></select></label>
+              <label>Second line in episode<input id="second-episode" placeholder="0:02:01.40"></label>
+              <div><button type="button" data-capture="second-episode">Use playhead for second line</button></div>
+            </div>
+            <div id="cut-options" hidden>
+              <p class="muted">Use a shift when the timing jumps at an edit. If there’s a pause before the shifted line, set when the previous subtitle should disappear.</p>
+              <div class="grid">
+                <label>Previous line ends (optional)<input id="before-cut-end"></label>
+                <div><button type="button" data-capture="before-cut-end">Use playhead for previous line end</button></div>
+              </div>
             </div>
           </div>
         </div>
-      </div>
-      <p id="plain-hint" class="muted" hidden>The draft estimates three seconds per line, or less to fit the available time. You can edit every cue.</p>
-      <div class="row">
-        <button id="draft" type="button">Build timing draft</button>
-        <button id="fill-times" type="button" hidden>Fill missing times</button>
-      </div>
-      <div id="cue-list"></div>
-    </section>
-    <section class="panel">
-      <h2>Export</h2>
-      <p id="export-summary" class="muted"></p>
-      <label>Furigana in exported subtitles<select id="furigana-mode"><option value="above">Furigana above each annotated word</option><option value="inline">Inline readings in parentheses</option><option value="base">Lyrics without readings</option></select></label>
-      <output id="export-status" role="status"></output>
-      <div class="row export-actions">
-        <button id="export-mkv" class="primary" type="button" hidden>Save as new MKV</button>
-        <button id="export-ass" class="primary" type="button">Download merged ASS</button>
-        <button id="export-zip" type="button">Download project ZIP</button>
-      </div>
-      <details>
-        <summary>Reopen a saved project</summary>
-        <label>Project ZIP for this episode<input id="restore" type="file" accept=".zip,application/zip"></label>
-      </details>
-    </section>
+        <p id="plain-hint" class="muted" hidden>The draft estimates three seconds per line, or less to fit the available time. You can edit every cue.</p>
+        <div class="row">
+          <button id="draft" type="button">Build timing draft</button>
+          <button id="fill-times" type="button" hidden>Fill missing times</button>
+        </div>
+        <div id="cue-list"></div>
+      </section>
+      <section class="panel" id="export-panel" role="tabpanel" aria-labelledby="tab-export" hidden>
+        <h2>Export</h2>
+        <p id="export-summary" class="muted"></p>
+        <label>Furigana in exported subtitles<select id="furigana-mode"><option value="above">Furigana above each annotated word</option><option value="inline">Inline readings in parentheses</option><option value="base">Lyrics without readings</option></select></label>
+        <output id="export-status" role="status"></output>
+        <div class="row export-actions">
+          <button id="export-mkv" class="primary" type="button" hidden>Save as new MKV</button>
+          <button id="export-ass" class="primary" type="button">Download merged ASS</button>
+          <button id="export-zip" type="button">Download project ZIP</button>
+        </div>
+        <details>
+          <summary>Reopen a saved project</summary>
+          <label>Project ZIP for this episode<input id="restore" type="file" accept=".zip,application/zip"></label>
+        </details>
+      </section>
+    </div>
   </div>
 </main>
 </body>

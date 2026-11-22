@@ -39,6 +39,39 @@ a { color: var(--accent); }
 .status { position: sticky; z-index: 3; top: 8px; background: #222642; color: #e1e4ff; border: 1px solid #474e7a; border-radius: 9px; padding: 9px 12px; }
 .status.error { color: #ffc5ca; border-color: #885864; background: #36232f; }
 .status:empty { display: none; }
+#episode-settings > summary { font-size: 1.12rem; font-weight: 650; }
+#episode-settings[open] > summary { margin-bottom: 12px; }
+#episode-settings[open] #episode-caption { display: none; }
+#episode-caption { margin-left: .6em; font-size: .9rem; font-weight: 400; color: var(--muted); overflow-wrap: anywhere; }
+main.editing { max-width: 1580px; padding: 14px clamp(12px, 2vw, 30px); }
+.editing .masthead { padding: 0 0 8px; margin: 0; }
+.editing .masthead h1 { font-size: 1.55rem; margin: 0; }
+.editing #intro { display: none; }
+.editing #episode-settings { padding: 9px 15px; margin: 0 0 12px; }
+.preview-pane, .toolbox { min-width: 0; }
+.toolbox { background: #1b1e2b; border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
+.tool-tabs { display: flex; background: #151823; border-bottom: 1px solid var(--border); padding: 4px 8px 0; flex: none; }
+.tool-tabs button { flex: 1; background: transparent; border: 0; border-bottom: 3px solid transparent; border-radius: 0; padding: 11px 5px 8px; color: var(--muted); }
+.tool-tabs button[aria-selected=true] { border-bottom-color: var(--accent); color: #fff; font-weight: 650; }
+.toolbox > .panel { margin: 0; padding: clamp(12px, 1.5vw, 22px); border: 0; border-radius: 0; overflow-wrap: anywhere; }
+.toolbox .grid > *, .toolbox .cue > * { min-width: 0; }
+.preview-pane video { height: auto; aspect-ratio: 16/9; object-fit: contain; }
+.preview-pane #chapter-note { margin-top: 15px; }
+.preview-pane .player-controls { gap: 5px; }
+.preview-pane .player-controls button { padding: 6px 9px; }
+#playback-note:empty, #draft-empty:empty { display: none; }
+@media (min-width: 900px) {
+  #project { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.08fr); gap: 16px; align-items: start; }
+  .preview-pane { margin: 0; padding: clamp(12px, 1.5vw, 22px); }
+}
+@media (min-width: 900px) and (min-height: 600px) {
+  main.editing { height: 100dvh; display: flex; flex-direction: column; }
+  .editing > :not(#project) { flex: none; }
+  .editing #episode-settings[open] { max-height: 32vh; overflow: auto; }
+  #project { min-height: 0; flex: 1; align-items: stretch; }
+  .preview-pane, .toolbox > .panel { overflow-y: auto; }
+  .toolbox { min-height: 0; display: flex; flex-direction: column; }
+}
 video { display: block; background: #0d0e17; width: 100%; height: clamp(130px, 33vw, 345px); border-radius: 10px; margin: 14px 0 10px; }
 .player-controls { align-items: center; }
 output { font-variant-numeric: tabular-nums; color: var(--accent); }
@@ -54,6 +87,10 @@ details > button { margin-top: 9px; }
 .cue input[type=checkbox] { margin-top: 0; }
 .cue button { font-size: .8rem; padding: 5px 7px; margin-top: 5px; }
 #cue-list { margin-top: 18px; }
+@media (min-width: 900px) and (max-width: 1220px) {
+  .cue { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cue > :first-child { grid-column: span 2; }
+}
 @media (max-width: 580px) {
   main { padding: 25px 12px 48px; }
   .panel { padding: 15px; }
@@ -67,4 +104,8 @@ details > button { margin-top: 9px; }
 .caption-list { max-height: 20rem; overflow: auto; margin: 8px 0; }
 .panel .caption-list label { display: flex; align-items: baseline; gap: 8px; padding: 5px; white-space: pre-line; }
 .panel .caption-list input { flex: none; }
+#whisper-review label.inline { display: flex; align-items: baseline; gap: .5em; }
+#whisper-review label.inline input { flex: none; }
+#whisper-review > div:not(.row) { padding: 9px 0; border-bottom: 1px solid var(--border); }
+.tool-tabs button:focus-visible { outline-offset: -3px; }
 .export-actions { margin-top: 12px; }
