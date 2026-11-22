@@ -1598,3 +1598,7 @@ $("restore").onchange = async event => {
         status(error instanceof SyntaxError || error instanceof TypeError ? "Choose a valid project ZIP from this app." : error.message, true);
     }
 };
+
+// The picker can receive a file while the browser is still loading this module and its catalog.
+const initialFile = $("episode").files[0];
+if (initialFile) loadEpisode(initialFile);
