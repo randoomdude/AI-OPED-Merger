@@ -283,9 +283,15 @@ function lyricLink(link, url, page = false) {
     link.rel = "noopener noreferrer";
     link.addEventListener("click", () => {
         if (page) $("source-url").value = url;
-        $("paste-lyrics").open = true;
-    }, { once: true });
+        openPasteLyrics();
+    });
 }
+
+function openPasteLyrics() {
+    openPanel("audio-options", true);
+    $("paste-lyrics").open = true;
+}
+$("open-paste-lyrics").onclick = openPasteLyrics;
 
 async function findLyricPage(site, items, song) {
     if (pendingSiteSearches.has(site.id)) return;
@@ -363,7 +369,7 @@ function showSourceLinks() {
                 return;
             }
             if (direct) $("source-url").value = direct;
-            $("paste-lyrics").open = true;
+            openPasteLyrics();
         };
         const urls = new Set();
         for (const item of items) {
@@ -1118,7 +1124,7 @@ async function runJimakuSearch(entryId) {
 
 $("jimaku-search").onclick = () => runJimakuSearch();
 
-function setSource(source) {
+function setSource(source, panel = "timing") {
     const state = slots[slot];
     if (state.source && !window.confirm("Replace the lyrics and timing draft for this song?")) return false;
     state.source = source;
@@ -1132,7 +1138,7 @@ function setSource(source) {
     state.secondMode = "drift";
     state.beforeCutEnd = "";
     showTiming();
-    openPanel("timing");
+    openPanel(panel);
     return true;
 }
 
@@ -1220,7 +1226,12 @@ $("use-paste").onclick = () => {
         const plain = rubyMarkup($("paste").value.trim());
         if ((url && !["https:", "http:"].includes(url.protocol)) || !plain) throw Error();
         const lines = parseLrc(plain);
-        setSource({ provider: "Pasted text", url: url?.href ?? "", plain: lines.length ? "" : plain, synced: lines.length ? plain : "" });
+        if (setSource({ provider: "Pasted text", url: url?.href ?? "", plain: lines.length ? "" : plain,
+            synced: lines.length ? plain : "" }, "audio-options")) {
+            $("paste-lyrics").open = false;
+            status(lines.length ? "Lyrics loaded. Build a timing draft in Draft before comparing with Whisper."
+                : "Lyrics loaded. Run Whisper to match their timing or open Draft to edit them.");
+        }
     } catch {
         status("Enter lyrics. If you include a source URL, use a complete http or https address.", true);
     }

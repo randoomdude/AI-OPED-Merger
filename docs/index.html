@@ -95,6 +95,7 @@
           <summary>Other title searches on Uta-Net and UtaTen</summary>
           <ul id="lyric-search-links"></ul>
         </details>
+        <button id="open-paste-lyrics" type="button">Paste lyrics or LRC</button>
         <details>
           <summary>Jimaku episode subtitles</summary>
           <div class="grid">
@@ -112,13 +113,6 @@
           <div id="jimaku-preview" aria-live="polite"></div>
           <button id="jimaku-whisper" type="button">Use Whisper timing</button>
         </details>
-        <details id="paste-lyrics">
-          <summary>Paste lyrics or LRC</summary>
-          <label>Source URL (optional)<input id="source-url" type="url" placeholder="https://…"></label>
-          <label>Original lyrics or LRC<textarea id="paste" rows="6"></textarea></label>
-          <p class="muted">For furigana, type 剣《つるぎ》 or paste text with HTML ruby readings.</p>
-          <button id="use-paste" type="button">Use pasted lyrics</button>
-        </details>
         <details id="reuse-panel">
           <summary>Reuse a timed opening or ending</summary>
           <label>Previous episode subtitles<input id="reuse-file" type="file" accept=".ass,.mkv"></label>
@@ -127,6 +121,13 @@
         <p id="source-status" class="muted" role="status"></p>
       </section>
       <section id="audio-options" class="panel" role="tabpanel" aria-labelledby="tab-audio" hidden>
+          <details id="paste-lyrics">
+            <summary>Paste lyrics or LRC</summary>
+            <label>Source URL (optional)<input id="source-url" type="url" placeholder="https://…"></label>
+            <label>Original lyrics or LRC<textarea id="paste" rows="6"></textarea></label>
+            <p class="muted">For furigana, type 剣《つるぎ》 or paste text with HTML ruby readings.</p>
+            <button id="use-paste" type="button">Use pasted lyrics</button>
+          </details>
           <h2>Time from episode audio</h2>
           <label id="hint-label" hidden>Spelling hints for local Whisper (optional)<input id="whisper-hint" maxlength="160" placeholder="A name or short phrase you hear"></label>
           <button id="run-whisper" type="button" hidden>Time with local Whisper</button>
