@@ -143,8 +143,8 @@ function timingDefaults(state, fallbackStart = NaN) {
 
 function showTimingDefaults() {
     const defaults = timingDefaults(slots[slot]);
-    $("window-end").placeholder = clock(defaults.end) || "Up to 1:34 after episode start";
-    $("first-episode").placeholder = clock(defaults.firstEpisode) || "Set the episode start first";
+    $("window-end").placeholder = clock(defaults.end) || "Up to 1:34 after " + slot + " start";
+    $("first-episode").placeholder = clock(defaults.firstEpisode) || "Set the " + slot + " start first";
 }
 
 function showSecondAnchor() {
@@ -230,6 +230,8 @@ function showSlot() {
     $("reuse-file").value = "";
     sourceRequest?.abort();
     const state = slots[slot];
+    $("window-start-label").textContent = slot + " start";
+    $("window-end-label").textContent = slot + " end (optional)";
     $("window-start").value = state.windowStart;
     $("window-end").value = state.windowEnd;
     showWindowNote();
@@ -617,7 +619,7 @@ $("jump").onclick = () => {
     const start = timestamp(slots[slot].windowStart);
     if (Number.isFinite(start)) return seek(start);
     $("window-start").focus();
-    status("The song start is unknown. Check a Jimaku subtitle file or enter an episode start.", true);
+    status("Enter the " + slot + " start or check a Jimaku subtitle file.", true);
 };
 $("back").onclick = () => seek(player.currentTime * 1000 - 2000);
 $("forward").onclick = () => seek(player.currentTime * 1000 + 2000);
@@ -1323,7 +1325,7 @@ $("run-whisper").onclick = async () => {
     const range = songWindow();
     if (!range) {
         $("window-start").focus();
-        return status("Set the song window or choose the Jimaku music markers before running Whisper.", true);
+        return status("Set a valid " + slot + " window or use Jimaku music markers before running Whisper.", true);
     }
     const { start, end } = range;
     const button = $("run-whisper");
