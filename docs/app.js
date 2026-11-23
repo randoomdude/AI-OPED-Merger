@@ -1,6 +1,6 @@
 import { dialogueIntervals, dialogueOffset, overlapsDialogue, songGaps } from "./caption-alignment.js";
 import { fetchCaptions, parseCaptions, suggestedWindow, lyricWindows, windowCaptions } from "./jimaku.js";
-import { shiftRows, songRows } from "./reuse.js";
+import { alignDraftStart, shiftRows, songRows } from "./reuse.js";
 import { rubyMarkup } from "./furigana.js";
 import { findChapter } from "./chapters.js";
 import { animeNames, episodeTitle, findAnime, findThemes, titleKey, titleWithoutYear } from "./themes.js";
@@ -1540,9 +1540,45 @@ function showTiming() {
 function showRows() {
     const state = slots[slot];
     const rows = state.rows;
+    const controls = [];
+    let includeAnchor;
     $("tab-timing").textContent = "Draft (" + rows.length + ")";
     $("fill-times").hidden = !rows.length || Boolean(state.lines.length);
+    $("draft-shortcuts").hidden = !rows.length;
     $("cue-list").replaceChildren();
+
+    function setIncluded(index, checked, extend) {
+        const anchor = extend ? includeAnchor ?? index : index;
+        const value = extend && includeAnchor !== undefined ? rows[anchor].include : checked;
+        for (let i = Math.min(anchor, index); i <= Math.max(anchor, index); i++) {
+            rows[i].include = controls[i].include.checked = value;
+        }
+        includeAnchor = anchor;
+        showExportSummary();
+    }
+
+    function moveLineStart(index, following) {
+        if (!player.readyState) return status("Load a playable preview before capturing the playhead.", true);
+        const before = rows[index].start;
+        try {
+            const shifted = alignDraftStart(rows.slice(index), player.currentTime * 1000,
+                episode.duration ?? player.duration * 1000, following);
+            shifted.forEach(({ start, end }, offset) => {
+                const row = rows[index + offset];
+                const fields = controls[index + offset];
+                fields.start.value = row.start = start;
+                fields.end.value = row.end = end;
+            });
+            const delta = timestamp(shifted[0].start) - timestamp(before);
+            if (following && delta) {
+                const seconds = (delta > 0 ? "+" : "") + (delta / 1000).toFixed(2);
+                status("Shifted timings from line " + (index + 1) + " by " + seconds + " s.");
+            } else status("Line " + (index + 1) + " set to " + shifted[0].start + "–" + shifted[0].end + ".");
+        } catch (error) {
+            status(error.message, true);
+        }
+    }
+
     rows.forEach((row, index) => {
         const wrap = document.createElement("div");
         wrap.className = "cue";
@@ -1551,8 +1587,17 @@ function showRows() {
         const include = document.createElement("input");
         include.type = "checkbox";
         include.checked = row.include;
-        include.onchange = () => { row.include = include.checked; showExportSummary(); };
+        include.onclick = event => setIncluded(index, include.checked, event.shiftKey);
+        function extendInclude(event) {
+            event.preventDefault();
+            include.focus();
+            setIncluded(index, !include.checked, true);
+        }
+        label.onclick = event => { if (event.shiftKey && event.target !== include) extendInclude(event); };
+        include.onkeydown = event => { if (event.shiftKey && event.key === " ") extendInclude(event); };
         label.prepend(include);
+        const fields = { include };
+        controls.push(fields);
         const lyric = document.createElement("textarea");
         lyric.rows = 2;
         lyric.value = row.text;
@@ -1564,12 +1609,15 @@ function showRows() {
         for (const key of ["start", "end"]) {
             const container = text("label", key === "start" ? "Start" : "End");
             const input = document.createElement("input");
+            fields[key] = input;
             input.value = row[key];
             input.setAttribute("aria-label", key + " for line " + (index + 1));
             input.oninput = () => { row[key] = input.value; };
             const capture = text("button", "Use playhead");
             capture.type = "button";
+            capture.setAttribute("aria-label", "Use playhead for " + key + " of line " + (index + 1));
             capture.onclick = () => {
+                if (key === "start") return moveLineStart(index, false);
                 if (!player.readyState) return status("Load a playable preview before capturing the playhead.", true);
                 input.value = row[key] = clock(player.currentTime * 1000);
             };
@@ -1578,7 +1626,11 @@ function showRows() {
                 const jump = text("button", "Go to line");
                 jump.type = "button";
                 jump.onclick = () => seek(timestamp(row.start));
-                container.append(jump);
+                const shift = text("button", "Shift from here");
+                shift.type = "button";
+                shift.setAttribute("aria-label", "Shift from line " + (index + 1) + " to playhead");
+                shift.onclick = () => moveLineStart(index, true);
+                container.append(jump, shift);
             }
             wrap.append(container);
         }

@@ -1,4 +1,4 @@
-import { clock, timestamp } from "./timing.js";
+import { clock, plainCueDuration, timestamp } from "./timing.js";
 
 export function shiftRows(rows, delta, duration) {
     if (!Number.isFinite(delta)) throw Error("Enter both song start times.");
@@ -13,6 +13,34 @@ export function shiftRows(rows, delta, duration) {
         }
         return next;
     });
+}
+
+export function alignDraftStart(rows, playhead, duration, following) {
+    const [anchor, ...later] = rows;
+    const priorStart = timestamp(anchor.start);
+    const priorEnd = timestamp(anchor.end);
+    const start = Math.round(playhead / 10) * 10;
+    const limit = Number.isFinite(duration) ? Math.ceil(duration / 10) * 10 : Infinity;
+    if (!Number.isFinite(start) || start < 0 || start >= limit) {
+        throw Error("Set the playhead to a time inside the episode.");
+    }
+    if (following && !Number.isFinite(priorStart)) {
+        throw Error("Enter a start time for this line before shifting the following lines.");
+    }
+    const tail = following ? shiftRows(later, start - priorStart, limit) : later;
+    let end;
+    if (Number.isFinite(priorStart) && priorEnd > priorStart) {
+        end = start + priorEnd - priorStart;
+    } else if (!Number.isFinite(priorStart) && priorEnd > start) {
+        end = priorEnd;
+    } else {
+        const next = tail.find(row => row.include && timestamp(row.start) > start);
+        end = Math.min(start + plainCueDuration, next ? timestamp(next.start) : Infinity, limit);
+    }
+    end = Math.max(start + 10, Math.round(end / 10) * 10);
+    if (end > limit) throw Error("The offset would move a subtitle outside this episode.");
+    const first = { ...anchor, start: clock(start), end: clock(end) };
+    return following ? [first, ...tail] : [first];
 }
 
 // ASS Text is the final field and may itself contain commas.

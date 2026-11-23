@@ -75,7 +75,7 @@ export function makeDraft(lines, { first, last, firstEpisode, second, secondEpis
     return rows;
 }
 
-const plainCueDuration = 3000;
+export const plainCueDuration = 3000;
 
 export function estimatePlainStart(rows) {
     let lead = 0;
