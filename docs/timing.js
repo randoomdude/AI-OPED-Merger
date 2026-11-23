@@ -136,12 +136,82 @@ export function fillMissingTimes(rows, { start, end }) {
     return filled;
 }
 
-// Matroska supplies the ASS script and the dialogue fields separately.
+export function srtCues(content) {
+    const text = content.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n");
+    const stamps = /^\s*(\d+:\d{2}:\d{2}[.,]\d{1,3})\s*-->\s*(\d+:\d{2}:\d{2}[.,]\d{1,3})(?:\s.*)?$/;
+    const cues = [];
+    for (const block of text.split(/\n[ \t]*\n/)) {
+        const lines = block.trim().split("\n");
+        const index = /^\d+$/.test(lines[0]?.trim()) ? 1 : 0;
+        const match = lines[index]?.match(stamps);
+        if (!match) continue;
+        const start = timestamp(match[1].replace(",", "."));
+        const end = timestamp(match[2].replace(",", "."));
+        const caption = lines.slice(index + 1).join("\n");
+        if (Number.isFinite(start) && end > start && caption) cues.push({ time: start, duration: end - start, text: caption });
+    }
+    return cues;
+}
+
+const srtHeader = [
+    "[Script Info]", "ScriptType: v4.00+", "PlayResX: 1280", "PlayResY: 720",
+    "WrapStyle: 0", "ScaledBorderAndShadow: yes", "", "[V4+ Styles]",
+    "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+    "Style: Default,Arial,40,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,32,32,28,1",
+].join("\n");
+
+function srtAssText(input) {
+    const entities = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: "\u00a0" };
+    const token = /<(\/?)([bius])\s*>|<br\s*\/?>|<\/?font\b[^>]*>|\{\\an([1-9])\}/gi;
+    const colorStack = [];
+    const styles = { b: 0, i: 0, u: 0, s: 0 };
+    const colors = { white: "ffffff", black: "000000", red: "ff0000", green: "008000", blue: "0000ff",
+        yellow: "ffff00", cyan: "00ffff", magenta: "ff00ff" };
+    function plain(value) {
+        return value.replace(/&(#x[0-9a-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi, (entity, code) => {
+            if (!code.startsWith("#")) return entities[code.toLowerCase()];
+            const hex = code[1].toLowerCase() === "x";
+            const point = Number.parseInt(code.slice(hex ? 2 : 1), hex ? 16 : 10);
+            return point > 0 && point <= 0x10ffff && (point < 0xd800 || point > 0xdfff) && point !== 13
+                && (point >= 32 || point === 9 || point === 10) ? String.fromCodePoint(point) : entity;
+        }).replace(/\\/g, "＼").replace(/\{/g, "｛").replace(/\}/g, "｝").replace(/\r\n?|\n/g, "\\N");
+    }
+    let result = "", cursor = 0;
+    for (const match of input.matchAll(token)) {
+        result += plain(input.slice(cursor, match.index));
+        cursor = match.index + match[0].length;
+        if (match[2]) {
+            const tag = match[2].toLowerCase();
+            styles[tag] = match[1] ? Math.max(0, styles[tag] - 1) : styles[tag] + 1;
+            result += "{\\" + tag + Number(styles[tag] > 0) + "}";
+        } else if (match[3]) result += "{\\an" + match[3] + "}";
+        else if (/^<br/i.test(match[0])) result += "\\N";
+        else {
+            const original = colorStack.at(-1);
+            if (/^<\//.test(match[0])) colorStack.pop();
+            else {
+                const value = match[0].match(/\bcolor\s*=\s*(?:["']([^"']+)["']|([^>\s]+))/i);
+                const raw = (value?.[1] || value?.[2] || "").toLowerCase();
+                let rgb = /^(?:#?[0-9a-f]{6}|#[0-9a-f]{3})$/.test(raw) ? raw.replace("#", "")
+                    : Object.hasOwn(colors, raw) ? colors[raw] : "";
+                if (rgb?.length === 3) rgb = rgb.replace(/./g, c => c + c);
+                colorStack.push(rgb ? rgb.match(/../g).reverse().join("") : original);
+            }
+            const color = colorStack.at(-1);
+            if (color !== original) result += color ? "{\\1c&H" + color + "&}" : "{\\1c}";
+        }
+    }
+    return result + plain(input.slice(cursor));
+}
+
+// Matroska supplies styled dialogue separately. SRT tracks use a default ASS style.
 export function originalAss(track) {
-    const header = track.header.replace(/\r\n/g, "\n").trimEnd();
+    const srt = track.type === "utf8";
+    const header = srt ? srtHeader : track.header.replace(/\r\n/g, "\n").trimEnd();
     const lines = track.cues.map(cue => [
         cue.layer || 0, clock(cue.time), clock(cue.time + cue.duration), cue.style || "Default",
-        cue.name || "", cue.marginL || 0, cue.marginR || 0, cue.marginV || 0, cue.effect || "", cue.text,
+        cue.name || "", cue.marginL || 0, cue.marginR || 0, cue.marginV || 0, cue.effect || "",
+        srt ? srtAssText(cue.text) : cue.text,
     ]);
     const events = header.includes("[Events]") ? header : header + "\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text";
     if (lines.some(line => !line[1] || !line[2])) throw Error("The MKV contains an ASS cue without a usable timestamp.");

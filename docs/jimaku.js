@@ -1,4 +1,4 @@
-import { timestamp } from "./timing.js";
+import { srtCues, timestamp } from "./timing.js";
 import { rubyMarkup } from "./furigana.js";
 
 export async function fetchCaptions(url, signal) {
@@ -34,12 +34,7 @@ export function parseCaptions(content, name) {
         if (Number.isFinite(start) && end > start && text) cues.push({ start, end, text, style });
     }
     if (/\.srt$/i.test(name)) {
-        for (const block of clean.split(/\n[ \t]*\n/)) {
-            const lines = block.trim().split("\n");
-            const idx = lines.findIndex(line => line.includes("-->"));
-            const times = idx >= 0 && lines[idx].match(/^\s*(\d+:\d{2}:\d{2}[.,]\d{1,3})\s*-->\s*(\d+:\d{2}:\d{2}[.,]\d{1,3})/);
-            if (times) add(timestamp(times[1].replace(",", ".")), timestamp(times[2].replace(",", ".")), lines.slice(idx + 1).join("\n"));
-        }
+        for (const cue of srtCues(clean)) add(cue.time, cue.time + cue.duration, cue.text);
     } else {
         let fields = [], events = false;
         for (const line of clean.split("\n")) {

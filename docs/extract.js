@@ -138,11 +138,16 @@ async function extract(file) {
     parser.on("error", error => { failure = error; });
     parser.on("tracks", entries => {
         encounteredTracks = true;
-        tracks = new Map(entries.filter(entry => entry.type === "ass").map(entry => [
+        tracks = new Map(entries.filter(entry => entry.type === "ass" || entry.type === "utf8").map(entry => [
             entry.number, { ...entry, ...flags.get(entry.number), cues: [] },
         ]));
     });
-    parser.on("subtitle", (cue, number) => tracks.get(number)?.cues.push(cue));
+    parser.on("subtitle", (cue, number) => {
+        const track = tracks.get(number);
+        if (!track) return;
+        if (track.type === "utf8" && (!Number.isFinite(cue.time) || !Number.isFinite(cue.duration) || cue.duration <= 0 || !cue.text.trim())) return;
+        track.cues.push(cue);
+    });
     parser.on("file", attachment => {
         if (attachment.data && /\.(ttf|otf|ttc|woff2?)$/i.test(attachment.filename || "")) {
             fonts.push({ name: attachment.filename.replace(/^.*[/\\]/, ""), data: new Uint8Array(attachment.data) });
@@ -157,7 +162,7 @@ async function extract(file) {
             if (done) break;
             parser.write(value);
             if (failure) throw failure;
-            if (encounteredTracks && !tracks.size) throw Error("No embedded ASS subtitle tracks were found.");
+            if (encounteredTracks && !tracks.size) break;
             processed += value.length;
             const percent = Math.floor(100 * processed / file.size);
             if (percent > progress) {
@@ -170,8 +175,7 @@ async function extract(file) {
     } finally {
         await reader.cancel();
     }
-    tracks = Array.from(tracks.values()).filter(track => track.header && track.cues.length);
-    if (!tracks.length) throw Error("No embedded ASS subtitle cues were found.");
+    tracks = Array.from(tracks.values()).filter(track => (track.type === "utf8" || track.header) && track.cues.length);
     postMessage({ tracks, chapters, duration, fonts }, fonts.map(font => font.data.buffer));
 }
 

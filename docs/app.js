@@ -4,7 +4,7 @@ import { shiftRows, songRows } from "./reuse.js";
 import { rubyMarkup } from "./furigana.js";
 import { findChapter } from "./chapters.js";
 import { animeNames, findAnime, findThemes, titleKey, titleWithoutYear } from "./themes.js";
-import { timestamp, clock, parseLrc, makeDraft, estimatePlainStart, fillMissingTimes,
+import { timestamp, clock, parseLrc, makeDraft, estimatePlainStart, fillMissingTimes, srtCues,
     originalAss, validatedCues, mergedAss } from "./timing.js";
 import { readWhisperTiming, whisperDraft } from "./whisper.js";
 
@@ -146,10 +146,10 @@ function showSecondAnchor() {
 
 function trackChanged() {
     selectedTrack = episode.tracks.find(track => track.number === Number($("track").value));
-    localDialogue = dialogueIntervals(selectedTrack);
+    localDialogue = selectedTrack ? dialogueIntervals(selectedTrack) : [];
     for (const name of ["OP", "ED"]) {
         const state = slots[name];
-        const gaps = selectedTrack.forced || /^(?:signs|songs|forced)$|\b(?:signs|songs) only\b/i.test(selectedTrack.name || "")
+        const gaps = selectedTrack?.forced || /^(?:signs|songs|forced)$|\b(?:signs|songs) only\b/i.test(selectedTrack?.name || "")
             ? [] : songGaps(localDialogue, name, episode.duration);
         trackGaps[name] = gaps;
         if (state.chapter || state.windowOrigin === "manual" ||
@@ -164,10 +164,55 @@ function trackChanged() {
     }
     syncWindowFields();
     renderCaptionPreview();
-    const styleCount = (selectedTrack.header.match(/^Style:/gm) || []).length;
-    $("track-summary").textContent = selectedTrack.cues.length + " subtitle events · " + styleCount
-        + " ASS styles · " + episode.fonts.length + " attached fonts";
+    if (!selectedTrack) $("track-summary").textContent = "This MKV has no readable ASS or SRT track. Choose a separate SRT file for the episode.";
+    else if (selectedTrack.type === "utf8") $("track-summary").textContent = selectedTrack.cues.length + " subtitle events · Converted to ASS on export";
+    else {
+        const styleCount = (selectedTrack.header.match(/^Style:/gm) || []).length;
+        $("track-summary").textContent = selectedTrack.cues.length + " subtitle events · " + styleCount
+            + " ASS styles · " + episode.fonts.length + " attached fonts";
+    }
 }
+
+const maxSrtSize = 8 * 1024 * 1024;
+function externalSrt(name, content) {
+    if (new Blob([content]).size > maxSrtSize) throw Error("The SRT file exceeds 8 MB.");
+    const cues = srtCues(content);
+    if (!cues.length) throw Error("The SRT file has no readable timed subtitles.");
+    return { number: 0, name, type: "utf8", language: "und", cues, srt: content };
+}
+
+function showTracks(number) {
+    const tracks = $("track");
+    tracks.replaceChildren(...episode.tracks.map(track => option(
+        (track.name || "Track " + track.number) + " · " + (track.language || "und") +
+        " · " + track.cues.length + " cues · " + (track.type === "utf8" ? "SRT" : "ASS"), track.number)));
+    if (!episode.tracks.length) tracks.append(option("No embedded ASS or SRT track", ""));
+    tracks.value = number ?? "";
+    trackChanged();
+}
+
+$("external-srt").onchange = async event => {
+    const file = event.target.files[0];
+    if (!file || !episode) return;
+    const opened = episode;
+    try {
+        if (file.size > maxSrtSize) throw Error("The SRT file exceeds 8 MB.");
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const encoding = bytes[0] === 255 && bytes[1] === 254 ? "utf-16le"
+            : bytes[0] === 254 && bytes[1] === 255 ? "utf-16be" : "utf-8";
+        const content = new TextDecoder(encoding, { fatal: true }).decode(bytes);
+        const track = externalSrt(file.name, content);
+        if (episode !== opened || event.target.files[0] !== file) return;
+        episode.tracks = [...episode.tracks.filter(track => track.number !== 0), track];
+        showTracks(track.number);
+        status("Loaded " + file.name + " for this episode.");
+    } catch (error) {
+        if (episode === opened && event.target.files[0] === file) {
+            event.target.value = "";
+            status(error instanceof TypeError ? "Choose an SRT encoded as UTF-8 or UTF-16 with a byte-order mark." : error.message, true);
+        }
+    }
+};
 
 function showSlot() {
     $("whisper-hint").value = "";
@@ -321,6 +366,7 @@ function loadEpisode(file) {
     episode = null;
     $("project").hidden = true;
     $("track-options").hidden = true;
+    $("external-srt").value = "";
     $("filename").textContent = file.name;
     $("progress").value = 0;
     $("progress").hidden = false;
@@ -357,20 +403,18 @@ function loadEpisode(file) {
             !track.forced && !/\b(signs|songs|forced)\b/i.test(track.name || ""));
         const defaults = english.filter(track => track.default);
         const track = defaults.length === 1 ? defaults[0] : english.length === 1 ? english[0] : tracks[0];
-        $("track").replaceChildren(...tracks.map(item => option(
-            (item.name || "Track " + item.number) + " · " + (item.language || "und") + " · " + item.cues.length + " cues", item.number)));
-        $("track").value = track.number;
-        trackChanged();
+        showTracks(track?.number);
         slot = $("slot").value = "OP";
         $("project").hidden = false;
         $("episode-caption").textContent = file.name;
-        $("episode-settings").open = false;
+        $("episode-settings").open = !tracks.length;
         document.querySelector("main").classList.add("editing");
         $("track-options").hidden = false;
         setPreview(file);
         showSlot();
         if (!episode.themeShow) resolveEpisodeThemes([episode.anime]);
-        status(english.length === 1 || defaults.length === 1
+        status(!tracks.length ? "Episode ready. Choose a separate SRT file under Episode."
+            : english.length === 1 || defaults.length === 1
             ? "Episode ready. Choose the song and find its lyrics."
             : "Episode ready. Check which subtitle track you want to merge.");
     };
@@ -1079,7 +1123,8 @@ $("reuse-file").onchange = async event => {
         let anchor;
         if (/\.mkv$/i.test(file.name)) {
             const old = await readPreviousMkv(file);
-            tracks = old.tracks.map(track => ({name: track.name || "Track " + track.number, script: originalAss(track)}));
+            tracks = old.tracks.filter(track => track.type === "ass")
+                .map(track => ({name: track.name || "Track " + track.number, script: originalAss(track)}));
             anchor = findChapter(old.chapters, name)?.start;
         } else tracks = [{name: file.name, script: await file.text()}];
         if (!current()) return;
@@ -1475,6 +1520,7 @@ async function exportProject(zip, saveMkv = false) {
     }
     $("export-status").textContent = "";
     try {
+        if (!selectedTrack) throw Error("Choose a subtitle track or an SRT file under Episode before exporting.");
         const original = originalAss(selectedTrack);
         const rows = Object.fromEntries(Object.entries(slots).map(([key, state]) => [key,
             !zip && hasMissingPlainTimes(state) ? fillPlainRows(state, state.rows) : state.rows]));
@@ -1517,8 +1563,10 @@ async function exportProject(zip, saveMkv = false) {
                 version: 1, mkv: episode.file.name, mkv_size: episode.file.size,
                 track: selectedTrack.number, duration_ms: episode.duration,
                 chapters: episode.chapters, songs: slots, furigana: $("furigana-mode").value,
+                srtName: selectedTrack.number === 0 ? selectedTrack.name : undefined,
             }, null, 2)),
         };
+        if (selectedTrack.number === 0) pack["original.srt"] = fflate.strToU8(selectedTrack.srt);
         if (cues?.length) pack["merged.ass"] = fflate.strToU8(mergedAss(original, cues, $("furigana-mode").value));
         episode.fonts.forEach((font, index) => {
             const name = font.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").replace(/[. ]+$/, "");
@@ -1543,11 +1591,15 @@ $("restore").onchange = async event => {
     try {
         if (file.size > 100 * 1024 * 1024) throw Error("Project ZIP exceeds 100 MB.");
         const bytes = new Uint8Array(await file.arrayBuffer());
-        const files = fflate.unzipSync(bytes, { filter: (entry) => entry.name === "project.json" && entry.originalSize < 8 * 1024 * 1024 });
+        const files = fflate.unzipSync(bytes, { filter: entry =>
+            ["project.json", "original.srt"].includes(entry.name) && entry.originalSize <= maxSrtSize });
         const saved = JSON.parse(fflate.strFromU8(files["project.json"]));
         if (opened !== episode) return;
+        const srt = saved.track === 0 && typeof saved.srtName === "string" && files["original.srt"]
+            ? externalSrt(saved.srtName, fflate.strFromU8(files["original.srt"])) : null;
         if (saved.version !== 1 || saved.mkv !== episode.file.name || saved.mkv_size !== episode.file.size
-            || saved.duration_ms !== episode.duration || !episode.tracks.some(track => track.number === saved.track)) {
+            || saved.duration_ms !== episode.duration ||
+            (saved.track === 0 ? !srt : !episode.tracks.some(track => track.number === saved.track))) {
             throw Error("Open the same MKV release before loading this project.");
         }
         const restored = {};
@@ -1589,8 +1641,11 @@ $("restore").onchange = async event => {
             !window.confirm("Replace the draft in this browser tab with the saved project?")) return;
         slots = restored;
         $("furigana-mode").value = ["above", "inline", "base"].includes(saved.furigana) ? saved.furigana : "above";
-        $("track").value = saved.track;
-        trackChanged();
+        if (srt) {
+            episode.tracks = [...episode.tracks.filter(track => track.number !== 0), srt];
+            $("external-srt").value = "";
+        }
+        showTracks(saved.track);
         showSlot();
         openPanel("timing");
         status("Saved project reopened.");

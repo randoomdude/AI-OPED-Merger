@@ -21,7 +21,7 @@ python -m PyInstaller --onefile --windowed --name "AI OP-ED Merger" --add-data "
 
 ## Using the app
 
-1. Choose a downloaded MKV and select its full subtitle track.
+1. Choose a downloaded MKV and select its full ASS or SRT subtitle track. You can also choose a separate SRT file under **Episode**. SRT dialogue is converted to ASS when you export.
 2. Choose Opening or Ending. The app uses the matching MKV chapter start when available. An explicit OP or ED takes priority over Intro or Credits. In an episode with four or more chapters, a generically named second chapter lasting 60–120 seconds near the beginning can suggest an opening. You can edit that estimate. The draft ends 1:34 later, or earlier if the chapter or episode ends sooner. You can enter a different end time.
 3. Search LRCLIB and import the matching recording, or use the Uta-Net and UtaTen links and paste lyrics with their source URL. Add English, Japanese, or romaji spellings under **Alternate search titles** to search them separately. Known themes open their verified lyric pages when available. For other series, the app matches the anime and its alternate titles through AniList and retrieves opening and ending titles and artists from AniSongDB. When multiple themes are listed, choose the one used in the episode. Use **Find OP/ED songs** to retry with an alternate anime title.
 4. For a timed recording, build a draft to place the source timestamps relative to the episode start. To adjust the timing, choose the first line heard and match it to the playhead. You can also trim the line range or match a later line to correct steady drift. Listen through the draft before exporting.
@@ -55,7 +55,7 @@ Chapters locate the song within the episode. LRCLIB timestamps describe a specif
 
 The Windows app prepares a 480p H.264 preview with FFmpeg when its player needs video conversion. The player shows when the first frame is ready. The app can reuse the two most recent converted episodes across launches, up to 512 MiB in the Windows temporary folder. Editing or replacing the MKV invalidates its cached preview. The timing editor and MKV export continue using the selected episode.
 
-Web preview depends on browser support for the episode's video and audio codecs. If the MKV cannot play, use a same-length preview file with the same time origin, or enter timestamps from your player. This release supports embedded ASS tracks and leaves the episode file untouched.
+Web preview depends on browser support for the episode's video and audio codecs. If the MKV cannot play, use a same-length preview file with the same time origin, or enter timestamps from your player.
 
 Searches send titles and artist names to LRCLIB. The app also sends the search text to AniList when it needs to look up title variants. Selected episodes, fonts, and projects are processed in memory and exported to your computer. Save a project ZIP before closing the page.
 
