@@ -330,8 +330,10 @@ function showSourceLinks() {
     const anime = detectedTitles()[0];
     $("detected-anime").textContent = "Anime · " + anime;
     const aliases = uniqueTitles(detectedTitles(show || episode.themeShow));
-    $("detected-titles-label").hidden = !aliases.length;
-    $("detected-titles").value = aliases.join("\n");
+    const theme = song || selectedSong(state, episode.themeShow, slot);
+    const titles = uniqueTitles([theme?.title || "", ...aliases]);
+    $("detected-titles-label").hidden = !titles.length;
+    $("detected-titles").value = titles.join("\n");
     const choices = episode.themeShow?.songs.filter(s => s.slot === slot) || [];
     $("theme-choices").hidden = choices.length < 2;
     if (choices.length > 1) {
@@ -341,9 +343,8 @@ function showSourceLinks() {
     }
     $("theme-status").textContent = episode.themeNote || (choices.length > 1 && !state.themeKey ? "Several themes are listed for this series."
         : episode.themeShow && !choices.length ? "No " + slot + " song is listed for this series. You can search by song title." : "");
-    const theme = selectedSong(state, episode.themeShow, slot) || song;
     $("song-title").textContent = theme ? (slot === "OP" ? "Opening" : "Ending") + " · " + theme.title + " · " + theme.artist : "";
-    const items = lyricSiteTerms(query, state, song, aliases);
+    const items = lyricSiteTerms(query, state, theme, aliases);
     const list = $("lyric-search-links");
     $("lyric-searches").hidden = !items.length;
     list.replaceChildren();
@@ -356,7 +357,7 @@ function showSourceLinks() {
         link.onclick = event => {
             if (!direct && desktop && items.length && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
                 event.preventDefault();
-                findLyricPage(site, items, song);
+                findLyricPage(site, items, theme);
                 return;
             }
             if (direct) $("source-url").value = direct;
@@ -1137,9 +1138,10 @@ $("search").onclick = async () => {
     const query = $("query").value.trim();
     const searching = slots[slot];
     const alternates = alternateTitles(searching);
-    if (!query && !alternates.length) return status("Enter a song, artist, or anime title.", true);
     const show = showForSearch(searching, query);
     const song = selectedSong(searching, show, slot);
+    const theme = song || selectedSong(searching, episode.themeShow, slot);
+    if (!query && !alternates.length && !theme) return status("Enter a song, artist, or anime title.", true);
     const signal = beginSourceRequest();
     $("search-status").textContent = "Searching LRCLIB…";
     $("lrclib-searches").hidden = true;
@@ -1152,12 +1154,12 @@ $("search").onclick = async () => {
             catch { signal.throwIfAborted(); }
         }
         const aliases = uniqueTitles((discovered.length ? discovered : detectedTitles()).map(titleWithoutYear));
-        const words = uniqueTitles([query, ...alternates, ...aliases]);
-        const variants = [song?.lrclib_search, ...(song?.lrclib_alternates || [])].filter(Boolean);
+        const words = uniqueTitles([query, theme?.title || "", ...alternates, ...aliases]);
+        const variants = [theme?.lrclib_search, ...(theme?.lrclib_alternates || [])].filter(Boolean);
         const queries = words.map(q => ({ q }));
         queries.splice(query ? 1 : 0, 0, ...variants);
         let rows = await searchLyrics(queries, signal);
-        if (!rows.length && Date.now() >= retryAt && song?.lrclib_alternates?.length) {
+        if (!rows.length && Date.now() >= retryAt && theme?.lrclib_alternates?.length) {
             const titles = [...new Set(variants.map(entry => entry.track_name).filter(Boolean))];
             const artists = variants.flatMap(entry => entry.artist_name ? [titleKey(entry.artist_name)] : []);
             rows = (await searchLyrics(titles.map(track_name => ({ track_name })), signal)).filter(record =>
