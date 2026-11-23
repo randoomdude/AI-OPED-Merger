@@ -48,6 +48,9 @@ main.editing { max-width: 1580px; padding: 14px clamp(12px, 2vw, 30px); }
 .editing .masthead h1 { font-size: 1.55rem; margin: 0; }
 .editing #intro { display: none; }
 .editing #episode-settings { padding: 9px 15px; margin: 0 0 12px; }
+.history-controls { display: flex; justify-content: flex-end; gap: 6px; margin-bottom: 8px; }
+.history-controls button { padding: 4px 10px; font-size: .9rem; }
+.history-controls button:disabled { cursor: default; }
 .preview-pane, .toolbox { min-width: 0; }
 .toolbox { background: #1b1e2b; border: 1px solid var(--border); border-radius: 16px; overflow: hidden; }
 .tool-tabs { display: flex; background: #151823; border-bottom: 1px solid var(--border); padding: 4px 8px 0; flex: none; }
@@ -61,14 +64,15 @@ main.editing { max-width: 1580px; padding: 14px clamp(12px, 2vw, 30px); }
 .preview-pane .player-controls button { padding: 6px 9px; }
 #playback-note:empty, #draft-empty:empty { display: none; }
 @media (min-width: 900px) {
-  #project { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.08fr); gap: 16px; align-items: start; }
+  #project { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.08fr); gap: 0 16px; align-items: start; }
+  .history-controls { grid-column: 1 / -1; }
   .preview-pane { margin: 0; padding: clamp(12px, 1.5vw, 22px); }
 }
 @media (min-width: 900px) and (min-height: 600px) {
   main.editing { height: 100dvh; display: flex; flex-direction: column; }
   .editing > :not(#project) { flex: none; }
   .editing #episode-settings[open] { max-height: 32vh; overflow: auto; }
-  #project { min-height: 0; flex: 1; align-items: stretch; }
+  #project { min-height: 0; flex: 1; align-items: stretch; grid-template-rows: auto minmax(0, 1fr); }
   .preview-pane, .toolbox > .panel { overflow-y: auto; }
   .toolbox { min-height: 0; display: flex; flex-direction: column; }
 }

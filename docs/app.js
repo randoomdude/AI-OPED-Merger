@@ -25,6 +25,7 @@ let worker;
 let previewUrl;
 let slot = "OP";
 let slots;
+let furiganaMode = "above";
 let sourceRequest;
 let jimakuRequest;
 let retryAt = 0;
@@ -33,6 +34,92 @@ function status(message, error = false) {
     $("status").textContent = message;
     $("status").classList.toggle("error", error);
 }
+
+const undoEdits = [];
+const redoEdits = [];
+const historyLimit = 50;
+let typingField;
+
+function updateHistoryButtons() {
+    $("undo").disabled = !undoEdits.length;
+    $("redo").disabled = !redoEdits.length;
+}
+
+function rememberProject(name = slot) {
+    // Subtitle tracks can be large. Track imports replace the array instead of mutating it.
+    return {
+        slot: name, songs: structuredClone(slots), track: selectedTrack?.number,
+        tracks: episode.tracks, themeShow: episode.themeShow, furiganaMode,
+    };
+}
+
+function beginEdit(field) {
+    if (field && field === typingField) return;
+    typingField = field;
+    undoEdits.push(rememberProject());
+    if (undoEdits.length > historyLimit) undoEdits.shift();
+    redoEdits.length = 0;
+    updateHistoryButtons();
+}
+
+function editField(input, read, write) {
+    input.dataset.projectEdit = "";
+    input.addEventListener("input", event => {
+        if (read() === input.value) return;
+        beginEdit(document.activeElement === input && event.isTrusted ? input : undefined);
+        write(input.value);
+    });
+    input.addEventListener("blur", () => {
+        if (typingField === input) typingField = undefined;
+    });
+}
+
+function stepHistory(redo) {
+    const from = redo ? redoEdits : undoEdits;
+    const to = redo ? undoEdits : redoEdits;
+    if (!episode || !from.length) return;
+    const saved = from.pop();
+    to.push(rememberProject(saved.slot));
+    typingField = undefined;
+    const focused = document.activeElement;
+    const fieldLabel = focused?.matches("[data-project-edit]") && focused.getAttribute("aria-label");
+    const start = focused?.selectionStart, end = focused?.selectionEnd;
+    const panel = document.querySelector(".toolbox > .panel:not([hidden])");
+    const scroll = panel?.scrollTop;
+    const sameSong = slot === saved.slot;
+    const tracksChanged = episode.tracks !== saved.tracks;
+    themeRequest?.abort();
+    episode.themeNote = "";
+    episode.themeShow = saved.themeShow;
+    episode.tracks = saved.tracks;
+    slots = saved.songs;
+    slot = $("slot").value = saved.slot;
+    if (tracksChanged) $("external-srt").value = "";
+    furiganaMode = $("furigana-mode").value = saved.furiganaMode;
+    showTracks(saved.track, false);
+    showSlot(sameSong);
+    if (panel && sameSong) panel.scrollTop = scroll;
+    if (sameSong && fieldLabel && !focused.isConnected) {
+        const field = $("cue-list").querySelector('[aria-label="' + CSS.escape(fieldLabel) + '"]');
+        field?.focus({ preventScroll: true });
+        if (start != null) field?.setSelectionRange(start, end);
+    }
+    updateHistoryButtons();
+    status(redo ? "Change redone." : "Change undone.");
+}
+
+$("undo").onclick = () => stepHistory(false);
+$("redo").onclick = () => stepHistory(true);
+document.addEventListener("keydown", event => {
+    if (event.defaultPrevented || event.isComposing || !(event.ctrlKey || event.metaKey) || event.altKey) return;
+    const key = event.key.toLowerCase();
+    if (key !== "z" && (key !== "y" || event.shiftKey)) return;
+    const focused = event.target;
+    if (!episode || focused.isContentEditable ||
+        focused.matches(":is(textarea, input:is([type=text], [type=search], [type=url], [type=password], [type=number], :not([type]))):not([readonly], [data-project-edit])")) return;
+    event.preventDefault();
+    stepHistory(key === "y" || event.shiftKey);
+});
 
 function text(tag, content, className) {
     const node = document.createElement(tag);
@@ -153,7 +240,7 @@ function showSecondAnchor() {
     $("cut-options").hidden = state.secondMode !== "shift";
 }
 
-function trackChanged() {
+function trackChanged(suggestWindows = true) {
     selectedTrack = episode.tracks.find(track => track.number === Number($("track").value));
     localDialogue = selectedTrack ? dialogueIntervals(selectedTrack) : [];
     for (const name of ["OP", "ED"]) {
@@ -161,7 +248,7 @@ function trackChanged() {
         const gaps = selectedTrack?.forced || /^(?:signs|songs|forced)$|\b(?:signs|songs) only\b/i.test(selectedTrack?.name || "")
             ? [] : songGaps(localDialogue, name, episode.duration);
         trackGaps[name] = gaps;
-        if (state.chapter || state.windowOrigin === "manual" ||
+        if (!suggestWindows || state.chapter || state.windowOrigin === "manual" ||
             (state.windowStart || state.windowEnd) && state.windowOrigin !== "a gap in MKV dialogue") continue;
         const same = gaps.find(g => g.start === timestamp(state.windowStart));
         const possible = gaps.filter(g => g.end - g.start <= 125_000);
@@ -190,14 +277,14 @@ function externalSrt(name, content) {
     return { number: 0, name, type: "utf8", language: "und", cues, srt: content };
 }
 
-function showTracks(number) {
+function showTracks(number, suggestWindows = true) {
     const tracks = $("track");
     tracks.replaceChildren(...episode.tracks.map(track => option(
         (track.name || "Track " + track.number) + " · " + (track.language || "und") +
         " · " + track.cues.length + " cues · " + (track.type === "utf8" ? "SRT" : "ASS"), track.number)));
     if (!episode.tracks.length) tracks.append(option("No embedded ASS or SRT track", ""));
     tracks.value = number ?? "";
-    trackChanged();
+    trackChanged(suggestWindows);
 }
 
 $("external-srt").onchange = async event => {
@@ -212,6 +299,7 @@ $("external-srt").onchange = async event => {
         const content = new TextDecoder(encoding, { fatal: true }).decode(bytes);
         const track = externalSrt(file.name, content);
         if (episode !== opened || event.target.files[0] !== file) return;
+        beginEdit();
         episode.tracks = [...episode.tracks.filter(track => track.number !== 0), track];
         showTracks(track.number);
         status("Loaded " + file.name + " for this episode.");
@@ -223,8 +311,8 @@ $("external-srt").onchange = async event => {
     }
 };
 
-function showSlot() {
-    $("whisper-hint").value = "";
+function showSlot(preserveInput = false) {
+    if (!preserveInput) $("whisper-hint").value = "";
     $("whisper-review").replaceChildren();
     $("reuse-review").replaceChildren();
     $("reuse-file").value = "";
@@ -238,8 +326,10 @@ function showSlot() {
     $("query").value = state.query;
     $("alternates").value = state.alternates;
     if (state.alternates) $("alternate-titles").open = true;
-    $("source-url").value = state.source?.url || state.song?.sources.uta_net || "";
-    $("paste").value = "";
+    if (!preserveInput) {
+        $("source-url").value = state.source?.url || state.song?.sources.uta_net || "";
+        $("paste").value = "";
+    }
     showSourceLinks();
     renderCaptionPreview();
     clearSearches();
@@ -397,6 +487,7 @@ function clearSearches() {
 
 $("theme-choice").onchange = () => {
     const state = slots[slot];
+    beginEdit();
     state.themeKey = $("theme-choice").value;
     state.song = selectedSong(state, episode.themeShow, slot);
     state.query = $("query").value = state.song?.search_query || state.song?.title || episode.themeShow.aliases[0];
@@ -430,6 +521,7 @@ async function resolveEpisodeThemes(terms, requested = false) {
         if (episode !== opened || signal.aborted) return;
         show ??= fallback;
         if (show) {
+            if (requested) beginEdit();
             opened.themeShow = show;
             for (const name of ["OP", "ED"]) {
                 const state = slots[name];
@@ -484,6 +576,9 @@ function desktopJob(action, ...args) {
 }
 
 function loadEpisode(file) {
+    undoEdits.length = redoEdits.length = 0;
+    typingField = undefined;
+    updateHistoryButtons();
     document.querySelector("main").classList.remove("editing");
     $("episode-settings").open = true;
     $("episode-caption").textContent = "";
@@ -497,7 +592,7 @@ function loadEpisode(file) {
     sourceRequest?.abort();
     jimakuRequest?.abort();
     clearCaptionPreview();
-    $("furigana-mode").value = "above";
+    furiganaMode = $("furigana-mode").value = "above";
     episode = null;
     $("project").hidden = true;
     $("track-options").hidden = true;
@@ -564,7 +659,14 @@ $("episode").addEventListener("change", event => {
     }
     loadEpisode(file);
 });
-$("track").addEventListener("change", trackChanged);
+$("track").addEventListener("change", () => {
+    beginEdit();
+    trackChanged();
+});
+$("furigana-mode").addEventListener("change", () => {
+    beginEdit();
+    furiganaMode = $("furigana-mode").value;
+});
 $("slot").addEventListener("change", event => { slot = event.target.value; showSlot(); });
 $("preview").addEventListener("change", event => { if (event.target.files[0]) setPreview(event.target.files[0]); });
 player.addEventListener("timeupdate", () => { $("playhead").textContent = clock(player.currentTime * 1000); });
@@ -631,7 +733,7 @@ $("back").onclick = () => seek(player.currentTime * 1000 - 2000);
 $("forward").onclick = () => seek(player.currentTime * 1000 + 2000);
 for (const [id, key] of [["query", "query"], ["alternates", "alternates"], ["window-start", "windowStart"], ["window-end", "windowEnd"],
     ["first-episode", "firstEpisode"], ["second-episode", "secondEpisode"], ["before-cut-end", "beforeCutEnd"]]) {
-    $(id).addEventListener("input", event => { slots[slot][key] = event.target.value; });
+    editField($(id), () => slots[slot][key], value => { slots[slot][key] = value; });
 }
 for (const id of ["query", "alternates"]) {
     $(id).addEventListener("input", () => {
@@ -648,12 +750,14 @@ for (const id of ["window-start", "window-end"]) $(id).addEventListener("input",
 });
 for (const key of ["first", "last", "second"]) {
     $(key).addEventListener("change", event => {
+        beginEdit();
         slots[slot][key] = event.target.value === "" ? null : Number(event.target.value);
     });
 }
 $("first").addEventListener("change", showTimingDefaults);
 $("second").addEventListener("change", showSecondAnchor);
 $("second-mode").addEventListener("change", event => {
+    beginEdit();
     slots[slot].secondMode = event.target.value;
     showSecondAnchor();
 });
@@ -766,6 +870,7 @@ async function checkCaptions(file, url, signal, selected = false) {
         if (checking.aborted) return;
         captionFile = { name: file.name, url, cues: parseCaptions(data, file.name) };
         if (selected || (Number.isFinite(episode.number) && $("jimaku-episode").value.trim() === String(episode.number))) {
+            let recorded = false;
             for (const name of ["OP", "ED"]) {
                 const state = slots[name];
                 if (state.windowStart || state.windowEnd || state.windowOrigin === "manual" || state.chapter) continue;
@@ -775,6 +880,8 @@ async function checkCaptions(file, url, signal, selected = false) {
                     ...c, start: c.start + offset, end: c.end + offset,
                 })), name, episode.duration);
                 if (markers || lyrics.length === 1) {
+                    if (!recorded) beginEdit();
+                    recorded = true;
                     useWindow(state, markers || lyrics[0], markers ? "Jimaku music markers" : "Jimaku lyric lines");
                     state.jimakuSync = { url: captionFile.url, offset };
                 }
@@ -802,6 +909,7 @@ function showWindowNote() {
     if (state.chapter && (timestamp(state.windowStart) !== timestamp(clock(state.chapter.start)) || state.windowEnd)) {
         const restore = text("button", "Use " + slot + " chapter at " + clock(state.chapter.start));
         restore.onclick = () => {
+            beginEdit();
             state.windowStart = clock(state.chapter.start);
             state.windowEnd = state.windowOrigin = "";
             syncWindowFields();
@@ -817,6 +925,7 @@ function showWindowNote() {
             option(clock(g.start) + " – " + clock(g.end) + " (" + ((g.end - g.start) / 1000).toFixed(1) + " s)", i)));
         select.onchange = () => {
             if (!select.value) return;
+            beginEdit();
             useGap(state, gaps[Number(select.value)]);
             syncWindowFields();
             renderCaptionPreview();
@@ -860,9 +969,10 @@ function adjustFile(file, offset) {
         end: timestamp(state.windowEnd) + offset - fileOffset(state, file) };
     if (lyricRange && (lyricRange.start < 0 || lyricRange.end > episode.duration)) return status("That offset moves the lyrics outside the episode.", true);
     if (marker && !range) return status("That offset moves the song markers outside the episode.", true);
+    let shifted;
     if (state.source?.provider === "Jimaku" && state.source.url === file.url && !state.source.whisper) {
         const change = offset - (state.source.offset || 0);
-        const shifted = state.rows.map(row => {
+        shifted = state.rows.map(row => {
             const next = { ...row };
             for (const key of ["start", "end"]) {
                 if (!row[key]?.trim()) continue;
@@ -873,6 +983,9 @@ function adjustFile(file, offset) {
             return next;
         });
         if (shifted.some(row => !row)) return status("That shift would move a draft line outside the episode or affect an invalid timestamp.", true);
+    }
+    beginEdit();
+    if (shifted) {
         state.rows = shifted;
         state.source.offset = offset;
     }
@@ -931,6 +1044,7 @@ function renderCaptionPreview() {
         const refine = state.windowOrigin === "a gap in MKV dialogue";
         const button = text("button", refine ? "Refine " + slot + " with Jimaku" : (suggestion ? "Use music markers for " : "Use timed lyric lines for ") + slot);
         button.onclick = () => {
+            beginEdit();
             useWindow(state, candidate, origin);
             state.jimakuSync = { url: file.url, offset };
             syncWindowFields();
@@ -1127,6 +1241,7 @@ $("jimaku-search").onclick = () => runJimakuSearch();
 function setSource(source, panel = "timing") {
     const state = slots[slot];
     if (state.source && !window.confirm("Replace the lyrics and timing draft for this song?")) return false;
+    beginEdit();
     state.source = source;
     state.lines = parseLrc(source.synced || "");
     state.rows = [];
@@ -1491,7 +1606,9 @@ async function applyWhisper(read) {
                 + (selected === "OP" ? " opening" : " ending") + " lines selected for export.");
         }
         function apply(next, replace = false) {
-            if (replace && !setSource({provider: "Local Whisper", plain: next.map(row => row.text).join("\n"), synced: "", url: ""})) return;
+            if (replace) {
+                if (!setSource({provider: "Local Whisper", plain: next.map(row => row.text).join("\n"), synced: "", url: ""})) return;
+            } else beginEdit();
             state.rows = next;
             state.source = {...state.source, whisper: true};
             state.windowStart ||= clock(data.start_ms);
@@ -1563,7 +1680,9 @@ function showRows() {
     function setIncluded(index, checked, extend) {
         const anchor = extend ? includeAnchor ?? index : index;
         const value = extend && includeAnchor !== undefined ? rows[anchor].include : checked;
-        for (let i = Math.min(anchor, index); i <= Math.max(anchor, index); i++) {
+        const first = Math.min(anchor, index), last = Math.max(anchor, index);
+        if (rows.slice(first, last + 1).some(row => row.include !== value)) beginEdit();
+        for (let i = first; i <= last; i++) {
             rows[i].include = controls[i].include.checked = value;
         }
         includeAnchor = anchor;
@@ -1576,6 +1695,7 @@ function showRows() {
         try {
             const shifted = alignDraftStart(rows.slice(index), player.currentTime * 1000,
                 episode.duration ?? player.duration * 1000, following);
+            if (shifted.some((row, offset) => row.start !== rows[index + offset].start || row.end !== rows[index + offset].end)) beginEdit();
             shifted.forEach(({ start, end }, offset) => {
                 const row = rows[index + offset];
                 const fields = controls[index + offset];
@@ -1616,7 +1736,7 @@ function showRows() {
         lyric.value = row.text;
         lyric.readOnly = Boolean(row.events);
         lyric.setAttribute("aria-label", "Lyric line " + (index + 1));
-        lyric.oninput = () => { row.text = lyric.value; };
+        editField(lyric, () => row.text, value => { row.text = value; });
         body.append(label, lyric);
         wrap.append(body);
         for (const key of ["start", "end"]) {
@@ -1625,14 +1745,16 @@ function showRows() {
             fields[key] = input;
             input.value = row[key];
             input.setAttribute("aria-label", key + " for line " + (index + 1));
-            input.oninput = () => { row[key] = input.value; };
+            editField(input, () => row[key], value => { row[key] = value; });
             const capture = text("button", "Use playhead");
             capture.type = "button";
             capture.setAttribute("aria-label", "Use playhead for " + key + " of line " + (index + 1));
             capture.onclick = () => {
                 if (key === "start") return moveLineStart(index, false);
                 if (!player.readyState) return status("Load a playable preview before capturing the playhead.", true);
-                input.value = row[key] = clock(player.currentTime * 1000);
+                const time = clock(player.currentTime * 1000);
+                if (row[key] !== time) beginEdit();
+                input.value = row[key] = time;
             };
             container.append(input, capture);
             if (key === "start") {
@@ -1666,7 +1788,9 @@ $("fill-times").onclick = () => {
     const state = slots[slot];
     if (!hasMissingPlainTimes(state)) return status("All included lines already have times.");
     try {
-        state.rows = fillPlainRows(state, state.rows);
+        const rows = fillPlainRows(state, state.rows);
+        beginEdit();
+        state.rows = rows;
         showRows();
         status("Missing times filled. Listen through and adjust the estimates.");
     } catch (error) {
@@ -1679,7 +1803,7 @@ $("draft").onclick = () => {
     if (state.rows.length && !window.confirm("Rebuild this song’s draft and replace its line edits?")) return;
     try {
         const defaults = timingDefaults(state);
-        state.rows = state.lines.length ? makeDraft(state.lines, {
+        const rows = state.lines.length ? makeDraft(state.lines, {
             first: state.first, last: state.last, second: state.second,
             firstEpisode: state.firstEpisode.trim() ? timestamp(state.firstEpisode) : defaults.firstEpisode,
             secondEpisode: timestamp(state.secondEpisode), secondMode: state.secondMode,
@@ -1687,6 +1811,8 @@ $("draft").onclick = () => {
             start: defaults.start,
             end: state.windowEnd.trim() ? timestamp(state.windowEnd) : defaults.end,
         }) : fillPlainRows(state, plainRows(state.source.plain));
+        beginEdit();
+        state.rows = rows;
         delete state.source.whisper;
         showTiming();
         status(state.lines.length ? "Draft created. Listen through and adjust its cues."
@@ -1733,7 +1859,7 @@ async function exportProject(zip, saveMkv = false) {
             if (!cues.length) throw Error("Time at least one lyric line to export merged subtitles.");
             const included = Object.entries(slots).filter(([, value]) => value.source && !value.rows.some(row => row.include));
             if (included.length && !window.confirm("Export without timed lyrics for " + included.map(([key]) => key).join(", ") + "?")) return;
-            const ass = mergedAss(original, cues, $("furigana-mode").value);
+            const ass = mergedAss(original, cues, furiganaMode);
             let saved;
             if (saveMkv) {
                 $("jimaku-whisper").disabled = $("export-mkv").disabled = $("run-whisper").disabled = true;
@@ -1749,6 +1875,7 @@ async function exportProject(zip, saveMkv = false) {
             }
             download(name + ".oped.ass", ass, "text/plain;charset=utf-8");
             const filled = Object.entries(rows).filter(([key, draft]) => slots[key].rows !== draft);
+            if (filled.length) beginEdit();
             for (const [key, draft] of filled) slots[key].rows = draft;
             if (filled.length) showRows();
             status(filled.length ? "Merged ASS exported with estimated times for blank fields." : "Merged ASS exported.");
@@ -1759,12 +1886,12 @@ async function exportProject(zip, saveMkv = false) {
             "project.json": fflate.strToU8(JSON.stringify({
                 version: 1, mkv: episode.file.name, mkv_size: episode.file.size,
                 track: selectedTrack.number, duration_ms: episode.duration,
-                chapters: episode.chapters, songs: slots, furigana: $("furigana-mode").value,
+                chapters: episode.chapters, songs: slots, furigana: furiganaMode,
                 srtName: selectedTrack.number === 0 ? selectedTrack.name : undefined,
             }, null, 2)),
         };
         if (selectedTrack.number === 0) pack["original.srt"] = fflate.strToU8(selectedTrack.srt);
-        if (cues?.length) pack["merged.ass"] = fflate.strToU8(mergedAss(original, cues, $("furigana-mode").value));
+        if (cues?.length) pack["merged.ass"] = fflate.strToU8(mergedAss(original, cues, furiganaMode));
         episode.fonts.forEach((font, index) => {
             const name = font.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").replace(/[. ]+$/, "");
             pack["fonts/" + String(index + 1) + "-" + name] = font.data;
@@ -1837,8 +1964,9 @@ $("restore").onchange = async event => {
         }
         if (Object.values(slots).some(state => state.source) &&
             !window.confirm("Replace the draft in this browser tab with the saved project?")) return;
+        beginEdit();
         slots = restored;
-        $("furigana-mode").value = ["above", "inline", "base"].includes(saved.furigana) ? saved.furigana : "above";
+        furiganaMode = $("furigana-mode").value = ["above", "inline", "base"].includes(saved.furigana) ? saved.furigana : "above";
         if (srt) {
             episode.tracks = [...episode.tracks.filter(track => track.number !== 0), srt];
             $("external-srt").value = "";
