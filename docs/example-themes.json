@@ -143,5 +143,28 @@
       "sources": { "uta_net": "https://www.uta-net.com/song/400649/", "uta_ten": "https://utaten.com/lyric/mi26100763/" }
     }
   ]
+},
+{
+  "aliases": ["Even the Student Council Has Its Holes!", "生徒会にも穴はある！", "Seitokai ni mo Ana wa Aru!", "There Is Also a Hole in the Student Organization!", "Even the Student Council Has Its Flaws!"],
+  "titles": ["Even the Student Council Has Its Holes!", "生徒会にも穴はある！", "Seitokai ni mo Ana wa Aru!"],
+  "metadata_source": "https://nama-anaru.com/music/",
+  "songs": [
+    {
+      "slot": "OP",
+      "title": "風の中は走るっきゃないっ！",
+      "artist": "三月のパンタシア",
+      "lrclib_search": { "track_name": "風の中は走るっきゃないっ！", "artist_name": "三月のパンタシア" },
+      "lrclib_alternates": [{ "track_name": "Kaze no Naka wa Hashirukkyanai!", "artist_name": "Sangatsu no Phantasia" }],
+      "sources": { "uta_net": "https://www.uta-net.com/song/400252/", "uta_ten": "https://utaten.com/lyric/mz26100705/", "lrclib_id": 39949371 }
+    },
+    {
+      "slot": "ED",
+      "title": "ぴ",
+      "artist": "ナナヲアカリ",
+      "lrclib_search": { "track_name": "ぴ", "artist_name": "ナナヲアカリ" },
+      "lrclib_alternates": [{ "track_name": "Pi", "artist_name": "Akari Nanao" }, { "track_name": "Pit", "artist_name": "Akari Nanawo" }],
+      "sources": { "uta_net": "https://www.uta-net.com/song/400208/", "uta_ten": "https://utaten.com/lyric/sz26100711/", "lrclib_id": 39253730 }
+    }
+  ]
 }
 ]

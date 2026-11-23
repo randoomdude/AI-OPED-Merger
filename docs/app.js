@@ -3,7 +3,7 @@ import { fetchCaptions, parseCaptions, suggestedWindow, lyricWindows, windowCapt
 import { shiftRows, songRows } from "./reuse.js";
 import { rubyMarkup } from "./furigana.js";
 import { findChapter } from "./chapters.js";
-import { animeNames, findAnime, findThemes, titleKey, titleWithoutYear } from "./themes.js";
+import { animeNames, episodeTitle, findAnime, findThemes, titleKey, titleWithoutYear } from "./themes.js";
 import { timestamp, clock, parseLrc, makeDraft, estimatePlainStart, fillMissingTimes, srtCues,
     originalAss, validatedCues, mergedAss } from "./timing.js";
 import { readWhisperTiming, whisperDraft } from "./whisper.js";
@@ -108,6 +108,15 @@ function themeKey(song) {
 function selectedSong(state, show, name) {
     const choices = show?.songs.filter(s => s.slot === name) || [];
     return choices.find(s => themeKey(s) === state.themeKey) || (choices.length === 1 ? choices[0] : null);
+}
+
+function fullAnimeTitles(show) {
+    return show?.titles || show?.aliases || [];
+}
+
+function detectedTitles(show = episode.themeShow) {
+    const titles = fullAnimeTitles(show);
+    return titles.length ? titles : animeNames(episode.anime);
 }
 
 function stateFor(name) {
@@ -226,15 +235,91 @@ function showSlot() {
     showWindowNote();
     $("query").value = state.query;
     $("alternates").value = state.alternates;
-    $("alternates").placeholder = episode.themeShow?.aliases.join("\n") || "One alternate title per line";
-    $("alternate-titles").open = Boolean(state.alternates);
+    if (state.alternates) $("alternate-titles").open = true;
     $("source-url").value = state.source?.url || state.song?.sources.uta_net || "";
     $("paste").value = "";
     showSourceLinks();
     renderCaptionPreview();
-    $("search-status").textContent = "";
-    $("results").replaceChildren();
+    clearSearches();
     showTiming();
+}
+
+const lyricSites = [
+    { id: "uta-net", key: "uta_net", name: "Uta-Net", home: "https://www.uta-net.com/" },
+    { id: "uta-ten", key: "uta_ten", name: "UtaTen", home: "https://utaten.com/search" },
+];
+const pendingSiteSearches = new Map();
+
+function lyricSearchUrl(site, item) {
+    if (!item) return site.home;
+    if (site.id === "uta-net") return site.home + "search/?" + new URLSearchParams({
+        target: item.anime ? "tieup" : "title", type: "in", keyword: item.title,
+    });
+    const params = new URLSearchParams({ [item.anime ? "sub_title" : "title"]: item.title, sort: "popular_sort_asc" });
+    if (item.artist) params.set("artist_name", item.artist);
+    return site.home + "?" + params;
+}
+
+function lyricSiteTerms(query, state, song, aliases) {
+    const manual = state.queryEdited && query ? [{ title: query }] : [];
+    const theme = song ? [{ title: song.title, artist: song.artist }, ...(song.lrclib_alternates || []).map(item =>
+        ({ title: item.track_name, artist: item.artist_name }))] : [];
+    const queries = [...manual, ...theme, ...uniqueTitles([query, ...alternateTitles(state)]).map(title => ({ title })),
+        ...uniqueTitles([...alternateTitles(state), ...aliases].map(titleWithoutYear)).map(title => ({ title, anime: true }))];
+    const seen = new Set();
+    return queries.filter(item => {
+        const key = JSON.stringify([Boolean(item.anime), titleKey(item.title), titleKey(item.artist || "")]);
+        if (!item.title || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
+function lyricLink(link, url, page = false) {
+    link.href = url;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    link.addEventListener("click", () => {
+        if (page) $("source-url").value = url;
+        $("paste-lyrics").open = true;
+    }, { once: true });
+}
+
+async function findLyricPage(site, items, song) {
+    if (pendingSiteSearches.has(site.id)) return;
+    const request = Symbol();
+    pendingSiteSearches.set(site.id, request);
+    const result = $(site.id + "-result");
+    result.textContent = "Checking " + site.name + " for lyric pages…";
+    try {
+        const match = await desktopJob("find_lyric_page", site.id, items, song ? { title: song.title, artist: song.artist } : null, slot);
+        if (pendingSiteSearches.get(site.id) !== request) return;
+        if (match.url) {
+            const link = text("a", "Open on " + site.name);
+            lyricLink(link, match.url, true);
+            result.replaceChildren(text("span", match.title + " · "), link);
+        } else if (match.suggestions?.length) {
+            const links = document.createElement("ul");
+            for (const candidate of match.suggestions) {
+                const row = document.createElement("li");
+                const link = text("a", candidate.title + (candidate.artist ? " · " + candidate.artist : ""));
+                lyricLink(link, candidate.url, true);
+                row.append(link);
+                links.append(row);
+            }
+            result.replaceChildren(text("p", "Choose the song on " + site.name + "."), links);
+        } else {
+            result.textContent = match.unavailable ? "Couldn’t check " + site.name + " directly. Open a search below."
+                : "No matching lyric page on " + site.name + " after " + match.tried + " searches.";
+            $("lyric-searches").open = true;
+        }
+    } catch {
+        if (pendingSiteSearches.get(site.id) !== request) return;
+        result.textContent = "Couldn’t check " + site.name + " directly. Open a search below.";
+        $("lyric-searches").open = true;
+    } finally {
+        if (pendingSiteSearches.get(site.id) === request) pendingSiteSearches.delete(site.id);
+    }
 }
 
 function showSourceLinks() {
@@ -242,6 +327,11 @@ function showSourceLinks() {
     const query = state.query.trim();
     const show = showForSearch(state, query);
     const song = selectedSong(state, show, slot);
+    const anime = detectedTitles()[0];
+    $("detected-anime").textContent = "Anime · " + anime;
+    const aliases = uniqueTitles(detectedTitles(show || episode.themeShow));
+    $("detected-titles-label").hidden = !aliases.length;
+    $("detected-titles").value = aliases.join("\n");
     const choices = episode.themeShow?.songs.filter(s => s.slot === slot) || [];
     $("theme-choices").hidden = choices.length < 2;
     if (choices.length > 1) {
@@ -251,23 +341,49 @@ function showSourceLinks() {
     }
     $("theme-status").textContent = episode.themeNote || (choices.length > 1 && !state.themeKey ? "Several themes are listed for this series."
         : episode.themeShow && !choices.length ? "No " + slot + " song is listed for this series. You can search by song title." : "");
-    $("song-title").textContent = song ? song.title + " · " + song.artist : "";
-    const searchTitle = song?.title || query;
-    for (const [id, key, name, searchUrl] of [
-        ["uta-net", "uta_net", "Uta-Net", searchTitle ? "https://www.uta-net.com/search/?" + new URLSearchParams({ target: "title", type: "in", keyword: searchTitle }) : "https://www.uta-net.com/"],
-        ["uta-ten", "uta_ten", "UtaTen", searchTitle
-            ? "https://utaten.com/search?" + new URLSearchParams({ title: searchTitle, sort: "popular_sort_asc" })
-            : "https://utaten.com/search"],
-    ]) {
-        const link = $(id);
-        const songPage = song?.sources[key];
-        link.href = songPage || searchUrl;
-        link.textContent = songPage ? name + " lyrics" : "Search " + name;
-        link.onclick = () => {
-            if (songPage) $("source-url").value = songPage;
+    const theme = selectedSong(state, episode.themeShow, slot) || song;
+    $("song-title").textContent = theme ? (slot === "OP" ? "Opening" : "Ending") + " · " + theme.title + " · " + theme.artist : "";
+    const items = lyricSiteTerms(query, state, song, aliases);
+    const list = $("lyric-search-links");
+    $("lyric-searches").hidden = !items.length;
+    list.replaceChildren();
+    for (const site of lyricSites) {
+        const link = $(site.id);
+        const songPage = song?.sources[site.key];
+        const direct = !state.queryEdited && songPage;
+        link.href = direct || lyricSearchUrl(site, items[0]);
+        link.textContent = direct ? site.name + " lyrics" : "Search " + site.name;
+        link.onclick = event => {
+            if (!direct && desktop && items.length && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
+                event.preventDefault();
+                findLyricPage(site, items, song);
+                return;
+            }
+            if (direct) $("source-url").value = direct;
             $("paste-lyrics").open = true;
         };
+        const urls = new Set();
+        for (const item of items) {
+            const url = lyricSearchUrl(site, item);
+            if (urls.has(url)) continue;
+            urls.add(url);
+            const action = text("a", site.name + " · " + item.title + (item.anime ? " (anime)" : item.artist ? " · " + item.artist : ""));
+            lyricLink(action, url);
+            const row = document.createElement("li");
+            row.append(action);
+            list.append(row);
+        }
     }
+}
+
+function clearSearches() {
+    sourceRequest?.abort();
+    pendingSiteSearches.clear();
+    $("search-status").textContent = "";
+    $("results").replaceChildren();
+    $("lrclib-searches").hidden = true;
+    $("lrclib-terms").replaceChildren();
+    for (const site of lyricSites) $(site.id + "-result").replaceChildren();
 }
 
 $("theme-choice").onchange = () => {
@@ -275,18 +391,21 @@ $("theme-choice").onchange = () => {
     state.themeKey = $("theme-choice").value;
     state.song = selectedSong(state, episode.themeShow, slot);
     state.query = $("query").value = state.song?.search_query || state.song?.title || episode.themeShow.aliases[0];
+    state.queryEdited = false;
+    clearSearches();
     showSourceLinks();
 };
 
-async function resolveEpisodeThemes(terms) {
+async function resolveEpisodeThemes(terms, requested = false) {
     themeRequest?.abort();
     themeRequest = new AbortController();
     const { signal } = themeRequest;
     const opened = episode;
+    const originalQueries = { OP: slots.OP.query, ED: slots.ED.query };
     opened.themeNote = "Looking up opening and ending songs…";
     showSourceLinks();
     try {
-        let show, matchedTitle;
+        let show, matchedTitle, fallback;
         for (const term of uniqueTitles(terms)) {
             matchedTitle = term;
             show = catalogShow(term);
@@ -297,8 +416,10 @@ async function resolveEpisodeThemes(terms) {
             if (show) break;
             const songs = await findThemes(media, signal);
             if (songs.length) { show = { aliases: media.aliases, songs }; break; }
+            fallback ??= { aliases: media.aliases, songs: [] };
         }
         if (episode !== opened || signal.aborted) return;
+        show ??= fallback;
         if (show) {
             opened.themeShow = show;
             for (const name of ["OP", "ED"]) {
@@ -307,10 +428,13 @@ async function resolveEpisodeThemes(terms) {
                     state.query === state.song?.title || state.query === matchedTitle || show.aliases.some(a => titleKey(a) === titleKey(state.query));
                 if (state.themeKey && !show.songs.some(s => s.slot === name && themeKey(s) === state.themeKey)) state.themeKey = "";
                 state.song = selectedSong(state, show, name);
-                if (replaceQuery) state.query = state.song?.search_query || state.song?.title || show.aliases[0];
+                if (replaceQuery && (!state.queryEdited || requested && state.query === originalQueries[name])) {
+                    state.query = state.song?.search_query || state.song?.title || show.aliases[0];
+                    state.queryEdited = false;
+                }
             }
+            if ($("query").value !== slots[slot].query) clearSearches();
             $("query").value = slots[slot].query;
-            $("alternates").placeholder = show.aliases.join("\n");
             opened.themeNote = "";
         } else opened.themeNote = "No matching themes found. Try an alternate anime title, or enter a song title to search the lyric sites.";
     } catch {
@@ -318,7 +442,7 @@ async function resolveEpisodeThemes(terms) {
     }
     if (episode === opened && !signal.aborted) showSourceLinks();
 }
-$("find-themes").onclick = () => resolveEpisodeThemes([slots[slot].query, ...alternateTitles(slots[slot]), episode.anime]);
+$("find-themes").onclick = () => resolveEpisodeThemes([slots[slot].query, ...alternateTitles(slots[slot]), episode.anime], true);
 
 const nativeView = window.chrome?.webview;
 let desktop = false;
@@ -354,6 +478,8 @@ function loadEpisode(file) {
     document.querySelector("main").classList.remove("editing");
     $("episode-settings").open = true;
     $("episode-caption").textContent = "";
+    $("alternate-titles").open = $("lyric-searches").open = false;
+    clearSearches();
     openPanel("sources");
     const desktopId = desktop ? crypto.randomUUID() : null;
     if (desktopId) nativeView.postMessageWithAdditionalObjects({ action: "episode", id: desktopId }, [file]);
@@ -385,10 +511,8 @@ function loadEpisode(file) {
             $("progress").value = data.progress;
             return;
         }
-        const filename = file.name.replace(/^(?:\[[^\]]+\]\s*)+/, "").replace(/\.mkv$/i, "");
-        const match = filename.match(/^(.+?)(?:\s+-\s+(\d+(?:\.\d+)?)(?:v\d+)?(?=\s|\[|\(|$)|[ ._-]+S\d+E(\d+)\b)/i);
-        const number = Number(match?.[2] ?? match?.[3]);
-        episode = { ...data, file, desktopId, number, anime: match?.[1] || filename };
+        const { anime, number } = episodeTitle(file.name);
+        episode = { ...data, file, desktopId, number, anime };
         episode.themeShow = catalogShow(episode.anime);
         $("jimaku-title").value = episode.anime;
         $("jimaku-episode").value = Number.isInteger(number) ? String(number) : "";
@@ -500,7 +624,13 @@ for (const [id, key] of [["query", "query"], ["alternates", "alternates"], ["win
     ["first-episode", "firstEpisode"], ["second-episode", "secondEpisode"], ["before-cut-end", "beforeCutEnd"]]) {
     $(id).addEventListener("input", event => { slots[slot][key] = event.target.value; });
 }
-$("query").addEventListener("input", showSourceLinks);
+for (const id of ["query", "alternates"]) {
+    $(id).addEventListener("input", () => {
+        if (id === "query") slots[slot].queryEdited = true;
+        clearSearches();
+        showSourceLinks();
+    });
+}
 $("window-start").addEventListener("input", showTimingDefaults);
 for (const id of ["window-start", "window-end"]) $(id).addEventListener("input", () => {
     slots[slot].windowOrigin = "manual";
@@ -558,11 +688,16 @@ async function lrclib(path, signal) {
 }
 
 async function searchLyrics(variants, signal) {
-    const queries = new Set(variants.map(params => new URLSearchParams(params).toString()));
+    const queries = new Map(variants.map(params => [new URLSearchParams(params).toString(), params]));
     const records = new Map();
     let failure;
-    for (const query of queries) {
+    for (const [query, term] of queries) {
         try {
+            signal.throwIfAborted();
+            if (Date.now() >= retryAt) {
+                $("lrclib-searches").hidden = false;
+                $("lrclib-terms").append(text("li", term.q || [term.track_name, term.artist_name].filter(Boolean).join(" · ")));
+            }
             const results = await lrclib("/api/v2/search?" + query, signal);
             for (const record of results) {
                 if (Number.isInteger(record.id) && (record.hasPlainLyrics || record.hasSyncedLyrics)) records.set(record.id, record);
@@ -575,10 +710,6 @@ async function searchLyrics(variants, signal) {
     }
     if (!records.size && failure) throw failure;
     return [...records.values()];
-}
-
-function animeQueries(titles) {
-    return [...new Set(titles.map(titleWithoutYear))].map(q => ({ q }));
 }
 
 function uniqueTitles(titles) {
@@ -1011,34 +1142,33 @@ $("search").onclick = async () => {
     const song = selectedSong(searching, show, slot);
     const signal = beginSourceRequest();
     $("search-status").textContent = "Searching LRCLIB…";
+    $("lrclib-searches").hidden = true;
+    $("lrclib-terms").replaceChildren();
     $("results").replaceChildren();
     try {
-        let rows;
-        if (song?.lrclib_search) {
-            const variants = [song.lrclib_search, ...(song.lrclib_alternates ?? [])];
-            rows = await searchLyrics([...variants, ...alternates.filter(q => q !== query).map(q => ({ q }))], signal);
-            if (!rows.length && song.lrclib_alternates?.length) {
-                const songTitles = [...new Set(variants.map(entry => entry.track_name))];
-                const artists = variants.map(entry => titleKey(entry.artist_name));
-                const candidates = [...animeQueries(show.aliases), ...songTitles.map(track_name => ({ track_name }))];
-                rows = (await searchLyrics(candidates, signal)).filter(record =>
-                    songTitles.some(title => titleKey(record.trackName).startsWith(titleKey(title))) && artists.includes(titleKey(record.artistName)));
-            }
-        } else {
-            let titles = show?.aliases;
-            if (!titles && query) {
-                try { titles = (await findAnime(query, signal))?.aliases.slice(0, 3); }
-                catch { signal.throwIfAborted(); }
-            }
-            const queries = uniqueTitles([song?.search_query || query, ...alternates, ...(titles || []).map(titleWithoutYear)]);
-            rows = await searchLyrics(queries.map(q => ({ q })), signal);
+        let discovered = fullAnimeTitles(show);
+        if (!show && query && !episode.themeShow) {
+            try { discovered = (await findAnime(query, signal))?.aliases || []; }
+            catch { signal.throwIfAborted(); }
+        }
+        const aliases = uniqueTitles((discovered.length ? discovered : detectedTitles()).map(titleWithoutYear));
+        const words = uniqueTitles([query, ...alternates, ...aliases]);
+        const variants = [song?.lrclib_search, ...(song?.lrclib_alternates || [])].filter(Boolean);
+        const queries = words.map(q => ({ q }));
+        queries.splice(query ? 1 : 0, 0, ...variants);
+        let rows = await searchLyrics(queries, signal);
+        if (!rows.length && Date.now() >= retryAt && song?.lrclib_alternates?.length) {
+            const titles = [...new Set(variants.map(entry => entry.track_name).filter(Boolean))];
+            const artists = variants.flatMap(entry => entry.artist_name ? [titleKey(entry.artist_name)] : []);
+            rows = (await searchLyrics(titles.map(track_name => ({ track_name })), signal)).filter(record =>
+                titles.some(title => titleKey(record.trackName).startsWith(titleKey(title))) && artists.includes(titleKey(record.artistName)));
         }
         if (signal.aborted || slots[slot] !== searching) return;
-        rows.sort((a, b) => Number(b.id === song?.sources.lrclib_id) - Number(a.id === song?.sources.lrclib_id));
+        if (!searching.queryEdited && song?.sources.lrclib_id)
+            rows.sort((a, b) => Number(b.id === song.sources.lrclib_id) - Number(a.id === song.sources.lrclib_id));
         $("search-status").textContent = rows.length
             ? "Choose the matching song and recording."
-            : song ? "No LRCLIB match for " + song.title + " by " + song.artist + ". Try a lyrics source below."
-                : "No lyrics found on LRCLIB. Try the song title or use another lyrics source below.";
+            : "No lyrics found on LRCLIB for these searches. Try a lyrics source below.";
         for (const record of rows) {
             const label = document.createElement("div");
             label.append(text("strong", record.trackName), text("span",
@@ -1618,6 +1748,7 @@ $("restore").onchange = async event => {
                 base.themeKey = song.themeKey;
                 base.song = selectedSong(base, episode.themeShow, name);
             }
+            if (song.queryEdited === true) base.queryEdited = true;
             if (song.secondMode === "shift") base.secondMode = "shift";
             if (["Jimaku music markers", "Jimaku lyric lines", "a gap in MKV dialogue", "manual"].includes(song.windowOrigin)) {
                 base.windowOrigin = song.windowOrigin;

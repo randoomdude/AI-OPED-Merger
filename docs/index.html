@@ -65,24 +65,36 @@
       </div>
       <section class="panel" id="sources" role="tabpanel" aria-labelledby="tab-sources">
         <h2>Source lyrics</h2>
+        <p id="detected-anime" class="muted"></p>
         <p id="song-title" class="muted"></p>
         <label id="theme-choices" hidden>Theme song<select id="theme-choice"></select></label>
         <div class="row">
-          <label class="fill">Song, artist, or anime title<input id="query" type="search"></label>
+          <label class="fill">Search term<input id="query" type="search" placeholder="Song, artist, or anime title"></label>
           <button id="find-themes" type="button">Find OP/ED songs</button>
           <button id="search" type="button">Search LRCLIB</button>
         </div>
         <details id="alternate-titles">
           <summary>Alternate search titles</summary>
-          <label>English, Japanese, or romaji, one per line<textarea id="alternates" rows="3"></textarea></label>
+          <label id="detected-titles-label" hidden>Detected anime titles<textarea id="detected-titles" rows="3" readonly></textarea></label>
+          <label>Additional search titles<textarea id="alternates" rows="3" placeholder="English, Japanese, or romaji. One title per line."></textarea></label>
         </details>
         <p id="theme-status" role="status" class="muted"></p>
         <p id="search-status" role="status" class="muted"></p>
+        <details id="lrclib-searches" hidden>
+          <summary>Searches tried on LRCLIB</summary>
+          <ol id="lrclib-terms"></ol>
+        </details>
         <div id="results"></div>
         <p class="muted">Other lyrics sources ·
           <a id="uta-net" href="https://www.uta-net.com/" target="_blank" rel="noopener noreferrer">Uta-Net</a> ·
           <a id="uta-ten" href="https://utaten.com/search" target="_blank" rel="noopener noreferrer">UtaTen</a>
         </p>
+        <div id="uta-net-result" aria-live="polite"></div>
+        <div id="uta-ten-result" aria-live="polite"></div>
+        <details id="lyric-searches" hidden>
+          <summary>Other title searches on Uta-Net and UtaTen</summary>
+          <ul id="lyric-search-links"></ul>
+        </details>
         <details>
           <summary>Jimaku episode subtitles</summary>
           <div class="grid">

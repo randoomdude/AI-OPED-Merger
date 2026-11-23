@@ -15,6 +15,8 @@ from urllib.parse import urldefrag
 
 import webview
 
+from lyric_pages import find_lyric_page
+
 DOCS = Path(__file__).resolve().parent / "docs"
 PREVIEW_CACHE = Path(gettempdir()) / "AI OP-ED Merger" / "previews-v1"
 
@@ -115,7 +117,8 @@ class Desktop:
         def run_job(message):
             request = message.get("id")
             try:
-                methods = {"time_song": self.time_song, "save_mkv": self.save_mkv, "prepare_preview": self.prepare_preview}
+                methods = {"time_song": self.time_song, "save_mkv": self.save_mkv, "prepare_preview": self.prepare_preview,
+                           "find_lyric_page": find_lyric_page}
                 result = methods[message["action"]](*message["args"])
                 response = {"id": request, "value": result}
             except Exception as error:
@@ -142,7 +145,7 @@ class Desktop:
                     path = Path(str(files[0].Path))
                     if path.is_file() and path.suffix.lower() == ".mkv":
                         self._selected = (token, path, path.stat())
-            elif action in ("time_song", "save_mkv", "prepare_preview"):
+            elif action in ("time_song", "save_mkv", "prepare_preview", "find_lyric_page"):
                 Thread(target=run_job, args=(data,)).start()
 
         view.NavigationStarting += navigation

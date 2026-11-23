@@ -13,6 +13,15 @@ export function animeNames(raw) {
     return pair && /\p{L}/u.test(pair[2]) ? [title, pair[1], pair[2]] : [title];
 }
 
+export function episodeTitle(fileName) {
+    const base = fileName.replace(/^(?:\[[^\]]+\]\s*)+/, "").replace(/\.mkv$/i, "");
+    const match = base.match(/^(.+?)(?:\s+-\s+(\d+(?:\.\d+)?)(?:v\d+)?(?=\s|\[|\(|$)|([ ._-]+)S\d+E(\d+)\b)/i);
+    let anime = match?.[1] || base;
+    if (match?.[3]?.includes(".")) anime = anime.replace(/(?<=[\p{L}])\.(?=[\p{L}])/gu, " ");
+    if (match?.[3]?.includes("_")) anime = anime.replace(/_/g, " ");
+    return { anime: anime.trim(), number: Number(match?.[2] ?? match?.[4]) };
+}
+
 const mediaCache = new Map();
 async function post(url, body, signal) {
     const response = await fetch(url, {
@@ -35,8 +44,9 @@ export async function findAnime(query, signal) {
             variables: { title },
         }, signal);
         const matches = (data?.Page?.media || []).map(media => ({
-            id: media.idMal, year: media.seasonYear, aliases: [...new Set([...Object.values(media.title), ...media.synonyms].filter(Boolean))],
-        })).filter(media => (!year || media.year === Number(year)) && media.aliases.some(name => titleKey(name) === titleKey(title)));
+            id: media.idMal, year: media.seasonYear, aliases: [...new Set([media.title.english, media.title.native, media.title.romaji].filter(Boolean))],
+            matched: [...Object.values(media.title), ...media.synonyms].some(name => name && titleKey(name) === titleKey(title)),
+        })).filter(media => (!year || media.year === Number(year)) && media.matched);
         if (matches.length === 1) {
             mediaCache.set(key, matches[0]);
             return matches[0];
